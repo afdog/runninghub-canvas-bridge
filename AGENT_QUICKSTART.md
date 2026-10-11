@@ -26,7 +26,7 @@ node scripts/mcp-call.mjs rh_canvas_summary --canvas 'connected canvas URL'
 node scripts/mcp-call.mjs rh_update_params --canvas 'connected canvas URL' --write --input-file /absolute/params.json
 ```
 
-The input file contains the tool's JSON arguments. Keep private payload files outside the source repository. Current docs and live capabilities take precedence over historical upstream examples.
+The input file contains the tool's JSON arguments. Keep private payload files outside the source repository. Current docs and live capabilities take precedence over older examples in this repository.
 
 
 ### Assets, references and concurrent editing

@@ -86,9 +86,7 @@ npm run release:package
 npm pack --pack-destination dist
 ```
 
-扩展 ZIP 与源码包输出到 `dist/`。扩展需配套本地服务运行，端口统一为 18765。历史文档保留上游记录，以本文和实时能力为准。
-
-基于 [windzu/runninghub-canvas-bridge](https://github.com/windzu/runninghub-canvas-bridge)，Apache-2.0。署名见 [UPSTREAM.md](UPSTREAM.md)，改动见 [CHANGELOG.md](CHANGELOG.md)。
+扩展 ZIP 与源码包输出到 `dist/`。扩展需配套本地服务运行，端口统一为 18765。以本文和实时能力为准。改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## v0.5 功能
 
@@ -119,3 +117,7 @@ PowerShell 如需开启生成，在安装服务前设置 `$env:RH_BRIDGE_ALLOW_G
 - `rh_diagnose` / `doctor` 给出 Windows、macOS、Linux 的连接与依赖诊断。
 
 项目的剧情、台词规范与制作资料由调用方提供，不内置在插件。批量准备不提交生成；语义与视听质量仍由制作 Agent 审核。详细输入与恢复方法见 [AGENT_QUICKSTART.md](AGENT_QUICKSTART.md)。
+
+## 参考
+
+本仓库为独立实现。连接 RunningHub 画布的思路，参考了 [windzu/runninghub-canvas-bridge](https://github.com/windzu/runninghub-canvas-bridge)。

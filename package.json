@@ -50,7 +50,6 @@
     "service:stop": "node scripts/rh-service.mjs stop"
   },
   "private": true,
-  "modificationNotice": "Modified 2026-09-27: international canvas support and guarded local bridge.",
   "dependencies": {
     "@aws-sdk/client-s3": "3.1141.0",
     "@aws-sdk/lib-storage": "3.1141.0",

@@ -1,7 +1,3 @@
-# Source attribution
+# 参考
 
-Based on [windzu/runninghub-canvas-bridge](https://github.com/windzu/runninghub-canvas-bridge),
-commit `eed2fa8320` (2026-05-28), under Apache-2.0.
-
-Original copyright: Copyright 2026 RunningHub Canvas Bridge contributors.
-Changes are documented in CHANGELOG.md and notices in modified files.
+本仓库为独立实现。连接 RunningHub 画布的思路，参考了 [windzu/runninghub-canvas-bridge](https://github.com/windzu/runninghub-canvas-bridge)。
