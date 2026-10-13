@@ -1,13 +1,21 @@
-importScripts('site-policy.js');
+importScripts('site-policy.js','browser-pump.js');
 const BROWSER_SOURCE='browser-extension';
 const BASE='http://127.0.0.1:18765';
 const policy=globalThis.RHCanvasSitePolicy;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let running=false;
-async function ready(tab){
+
+async function ready(tab,createdUrl){
   for(let i=0;i<60;i++){
-    const current=await chrome.tabs.get(tab.id);
-    if(current.status==='complete')return current;
+    try{
+      const current=await chrome.tabs.get(tab.id);
+      if(current.status==='complete')return current;
+    }catch(error){
+      // Codex can return a new tab before its ID is usable. Resolve the exact
+      // created URL again; this retries readiness, never an account API write.
+      if(!createdUrl || !/^No tab with id:/.test(String(error?.message || error)))throw error;
+      const matches=await chrome.tabs.query({url:createdUrl});
+      const resolved=matches.find(t=>t.url===createdUrl);if(resolved)tab=resolved;
+    }
     await delay(250);
   }
   throw new Error('PAGE_LOAD_TIMEOUT');
@@ -23,14 +31,21 @@ async function handleRaw(job){
     const site=policy.parseCanvas(job.canvasUrl);if(!site)throw new Error('INVALID_CANVAS_URL');
     const tabs=await chrome.tabs.query({url:policy.origins.map(o=>o+'/*')});
     const existing=tabs.find(t=>policy.parseCanvas(t.url)?.key===site.key);
-    const tab=await ready(existing ? (job.focus?await chrome.tabs.update(existing.id,{active:true}):existing) : await chrome.tabs.create({url:job.canvasUrl,active:job.focus===true}));
+    if(!existing){
+      await chrome.tabs.create({url:job.canvasUrl,active:BROWSER_SOURCE==='codex-browser' || job.focus===true});
+      // Newly created embedded tabs may not immediately support tabs.get. The
+      // manifest loads the page bridge; the MCP client waits for its real heartbeat.
+      return {ok:true,reused:false};
+    }
+    const tab=await ready(job.focus?await chrome.tabs.update(existing.id,{active:true}):existing);
     if(policy.parseCanvas(tab.url)?.key!==site.key)throw new Error('PAGE_ORIGIN_CHANGED');
     await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',files:['site-policy.js','bridge-main.js']});
     return {ok:true,reused:Boolean(existing)};
   }
   if(!['listCanvases','manageCanvas'].includes(job.action) || !policy.origins.includes(job.origin))throw new Error('BROWSER_ACTION_INVALID');
   const tabs=await chrome.tabs.query({url:job.origin+'/*'});
-  const tab=await ready(tabs[0] || await chrome.tabs.create({url:job.origin+'/projects/canvas/me',active:false}));
+  const createdUrl=job.origin+'/projects/canvas/me';
+  const tab=await ready(tabs[0] || await chrome.tabs.create({url:createdUrl,active:BROWSER_SOURCE==='codex-browser'}),tabs.length?null:createdUrl);
   const results=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:job.action==='manageCanvas'?manageAccountCanvas:listAccountCanvases,args:[{origin:job.origin,scope:job.scope,teamId:job.teamId,operation:job.operation,body:job.body,dryRun:job.dryRun}]});
   if(!results[0]?.result)throw new Error('CANVAS_LIST_EMPTY_RESPONSE');
   return results[0].result;
@@ -86,19 +101,16 @@ async function listAccountCanvases({origin,scope,teamId}){
     return {ok:true,complete:true,canvases};
   }catch{return {ok:false,error:'CANVAS_LIST_FAILED: check browser login and network'};}
 }
-async function pump(){
-  if(running)return;running=true;
-  try{
-    await Promise.all(Array.from({length:4},async()=>{for(let i=0;i<20;i++){
-      const response=await fetch(BASE+'/browser/poll?browserSource='+encodeURIComponent(BROWSER_SOURCE),{signal:AbortSignal.timeout(22000)});
-      if(!response.ok)break;
-      const job=await response.json();if(!job)continue;
-      let result;try{result=await handle(job);}catch{result={ok:false,error:'BROWSER_OPERATION_FAILED'};}
-      await fetch(BASE+'/browser/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:job.id,lease:job.lease,result}),signal:AbortSignal.timeout(8000)});
-    }}));
-  }catch{}finally{running=false;}
-}
-chrome.runtime.onMessage.addListener((message,sender)=>{if(message?.type==='rh.canvasHeartbeat' && policy.parseCanvas(sender.tab?.url))pump();});
+const transport=createRHBrowserPump({
+ poll:async()=>{const r=await fetch(BASE+'/browser/poll?waitMs=0&browserSource='+encodeURIComponent(BROWSER_SOURCE),{signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('POLL_FAILED');return r.json();},
+ execute:handle,
+ complete:async(job,result)=>{const r=await fetch(BASE+'/browser/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:job.id,lease:job.lease,result}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('RECEIPT_FAILED');},
+ schedule:(fn,ms)=>setTimeout(fn,ms),cancel:clearTimeout
+});
+const pump=()=>transport.wake();
+chrome.runtime.onMessage.addListener((message,sender,reply)=>{
+ if(message?.type==='rh.canvasHeartbeat' && policy.parseCanvas(sender.tab?.url)){pump();reply({ok:true,browserSource:BROWSER_SOURCE});}
+});
 chrome.alarms.create('bridge-browser-poll',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(pump);
 chrome.runtime.onStartup.addListener(pump);

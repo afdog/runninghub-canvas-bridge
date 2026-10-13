@@ -1,6 +1,6 @@
 # 安装与升级
 
-适用于 0.8.1。返回 [首页](README.md) · [Agent 使用](AGENT_QUICKSTART.md)。
+适用于 0.8.2。返回 [首页](README.md) · [Agent 使用](AGENT_QUICKSTART.md)。
 
 ## 1. 准备本机服务
 
@@ -33,8 +33,8 @@ npm start
 
 | 浏览器 | 源码构建目录 | Release 下载包 |
 | --- | --- | --- |
-| Codex / 桌面应用内置浏览器 | `dist/runninghub-canvas-bridge-codex-extension` | `runninghub-canvas-bridge-codex-extension-v0.8.1.zip` |
-| Chrome / Edge | `extension` | `runninghub-canvas-bridge-extension-v0.8.1.zip` |
+| Codex / 桌面应用内置浏览器 | `dist/runninghub-canvas-bridge-codex-extension` | `runninghub-canvas-bridge-codex-extension-v0.8.2.zip` |
+| Chrome / Edge | `extension` | `runninghub-canvas-bridge-extension-v0.8.2.zip` |
 
 - **内置浏览器：** 设置 → 浏览器 → 扩展程序管理器 → 管理 → 开发者模式 → 加载未打包的扩展程序。
 - **Chrome / Edge：** 打开浏览器扩展管理器，启用开发者模式并加载未打包扩展。
@@ -116,3 +116,27 @@ Tunnel 配置与界面以 [官方文档](https://github.com/openai/tunnel-client
 | 聊天附件落地 | 本机用户的 `Downloads/RunningHub/ChatGPT` |
 
 这些目录可能包含私人画布数据和临时媒体地址，不要提交或打包发布。浏览器登录凭据留在网页内。
+
+## 可选：隧道掉线自动恢复（0.8.2）
+
+`scripts/tunnel-watchdog.mjs` 可监督已有官方隧道管理脚本：
+
+```sh
+node scripts/tunnel-watchdog.mjs /absolute/path/to/manager.mjs
+```
+
+管理脚本须接受 `status` / `connect`，输出官方 runtime 状态 JSON。watchdog 每15秒检查一次；确认进程退出后重连，失败时逐步退避。运行中但网络不健康的进程不会被强杀。日志只输出状态，不回显密钥或原始配置。将 watchdog 配置到系统的用户后台服务中，进程退出后由系统重新启动。需要主动停止隧道时先停止 watchdog，否则它会按设计重连。
+
+watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?details=true`，检查控制面最近成功轮询和快照时效。`polling` 表示最近轮询正常；`poll-degraded` 表示退避或连接异常；`poll-stalled` 表示成功轮询已超过正常等待范围；`poll-health-unavailable` 表示缺少实时证据。它们不等于客户端工具调用成功，验收仍需真实 MCP 调用。旧管理器未提供地址时无法确认云端状态。
+
+隧道恢复不保证客户端继续持有的旧 MCP 会话仍有效。若仍报 `Session terminated`，客户端需要重新连接或在新会话中重新调用；先核查未知写入回执，不重复提交生成。扩展更新后需重新加载扩展并刷新画布，MAIN 和 ISOLATED 两种页面心跳才会同时生效。
+
+内置浏览器要求扩展新建的标签页处于激活状态；0.8.2 自动满足该要求。复用已有页面仍按 focus 参数处理，Chrome/Edge 保留后台开页能力。
+
+后台服务不会自动继承终端或系统代理环境。若 OpenAI 连接依赖已有代理，需在该后台服务中明确配置同一 HTTP_PROXY / HTTPS_PROXY，并让 NO_PROXY 排除本机地址。不要把 local healthy/ready 当作云端接通证据；应从客户端实际调用 rh_status 验证。
+
+若隧道日志出现 `control-plane proxy closed long poll`，说明长轮询被网络路径提前关闭；客户端随后的退避可能让工具调用失败。可在隧道后台服务环境中设置 `CONTROL_PLANE_POLL_TIMEOUT=10s` 和 `CONTROL_PLANE_INITIAL_POLL_TIMEOUT=10s`，再重启该隧道进程，使正常轮询在代理空闲超时前返回。此值只调整取回请求的等待周期，不缩短画布操作或生成的执行时限。沿用已有代理和 TLS 校验，不关闭证书验证。具体网络仍须实际验收。
+
+多个客户端共用官方 `tunnel-client` 0.0.16 的 stdio 进程时，如果出现 `MCP server is not initialized`，可在同一后台服务环境设置 `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`。这是官方客户端的兼容开关：在成功的 initialize 响应后、释放共享请求通道之前发送 initialized 通知，避免其他调用进入初始化空隙；后续重复通知会被客户端去重。它不重放工具调用，也不改变 RunningHub 的功能权限。此配置和轮询参数需要重启隧道进程生效，浏览器扩展无需因此重载。升级官方客户端后按其当前帮助再次核对。
+
+0.8.2 的服务端采用官方 SDK v2 `serveStdio` 入口，支持 MCP `2026-07-28` 的 `server/discover` 和自包含请求。支持新版协议的云端客户端可跳过反复 initialize/initialized；旧本地客户端仍可按原握手连接。更新源码后先安装依赖，再重启隧道进程，并用实际调用确认协商结果。无论使用哪个协议，每个画布任务都必须继续携带自己的 `scopeId`。协议说明见 [MCP TypeScript SDK](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions)。

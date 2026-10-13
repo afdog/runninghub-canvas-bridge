@@ -5,6 +5,27 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createMcpServer, BridgeClient } from '../server/mcp.mjs';
 import { fileURLToPath } from 'node:url';
+import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
+
+test('modern stdio discovery and overlapping calls work without initialize; invalid openings are rejected',async t=>{
+ const source=`import {serveStdio} from '@modelcontextprotocol/server/stdio';import {createMcpServer} from ${JSON.stringify(new URL('../server/mcp.mjs',import.meta.url).href)};serveStdio(()=>createMcpServer({status:async()=>({ok:true,source:'fixture'})}));`;
+ const child=spawn(process.execPath,['--input-type=module','-e',source],{cwd:fileURLToPath(new URL('..',import.meta.url)),stdio:['pipe','pipe','pipe']});
+ const pending=new Map();let id=0;child.stderr.resume();
+ const lines=createInterface({input:child.stdout});
+ lines.on('line',line=>{const message=JSON.parse(line),waiter=pending.get(message.id);if(waiter){pending.delete(message.id);clearTimeout(waiter.timer);waiter.resolve(message);}});
+ child.on('error',error=>{for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(error);}pending.clear();});
+ t.after(()=>{for(const waiter of pending.values())clearTimeout(waiter.timer);lines.close();child.kill();});
+ const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientCapabilities':{},'io.modelcontextprotocol/clientInfo':{name:'modern-test',version:'1'}};
+ const request=(method,params={},envelope=meta)=>new Promise((resolve,reject)=>{const requestId=++id;const timer=setTimeout(()=>{pending.delete(requestId);reject(Error('MCP test response timeout'));},5000);pending.set(requestId,{resolve,reject,timer});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:requestId,method,params:{...params,_meta:envelope}})+'\n');});
+ const unsupported=await request('tools/list',{}, {...meta,'io.modelcontextprotocol/protocolVersion':'2099-01-01'});assert.equal(unsupported.error?.code,-32022);
+ const malformed=await request('tools/call',{name:'rh_status',arguments:{}},{...meta,'io.modelcontextprotocol/clientCapabilities':null});assert.equal(malformed.error?.code,-32602);
+ const discover=await request('server/discover');assert.equal(discover.result.resultType,'complete');assert.ok(discover.result.supportedVersions.includes('2026-07-28'));
+ const responses=await Promise.all([request('tools/list'),...Array.from({length:4},()=>request('tools/call',{name:'rh_status',arguments:{}}))]);
+ assert.equal(responses[0].result.tools.length,73);
+ for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');}
+ const invalid=await request('tools/call',{name:'rh_move_nodes',arguments:{positions:[{nodeId:'A',x:'bad',y:0}]}});assert.equal(invalid.result.isError,true);
+});
 
 test('MCP handshake, typed tools, prompts and request IDs survive transport', async t => {
   const calls=[];

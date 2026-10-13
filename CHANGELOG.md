@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.2
+
+- Open new Codex built-in browser tabs as active, as required by the host; reusing an existing tab retains the normal focus preference.
+- Wait for newly created account pages to register their tab ID before querying the directory or dispatching an account operation; readiness retries never repeat the API write.
+
+- Replace extension long-poll batches with bounded short polling and all-settled lane handling to prevent overlapping workers after a transport failure.
+- Wake the extension worker from live page polling as well as isolated content-script timers and browser alarms.
+- Add an optional tunnel watchdog with health checks, reconnect backoff, and redacted state-only logs. It reconnects exited runtimes without replaying canvas commands.
+- Inspect fresh loopback control-plane health separately from local readiness, and document shorter tunnel polling for proxies that close long polls early.
+- Document the official stdio initialized-notification shim for interleaved tunnel callers sharing one MCP process.
+- Serve modern MCP 2026-07-28 discovery and self-contained calls through the official SDK v2 stdio entry, while retaining the legacy handshake for older local clients. Canvas scope handles remain explicit in both protocols.
+
 ## 0.8.1
 
 Added a separately labelled unpacked extension build for the Codex built-in browser, explicit browser-provider routing for account/open jobs, and server-enforced page pinning for task scopes. Source metadata is visible in status.

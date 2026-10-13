@@ -8,7 +8,7 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.8.1-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![Version](https://img.shields.io/badge/version-0.8.2-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
 [![MCP](https://img.shields.io/badge/MCP-73_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
@@ -96,7 +96,7 @@ rh_canvas_summary / get_node  检查已有内容
 | --- | --- |
 | 工具 | 73 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 本地 52 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
+| 自动测试 | 本地 60 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
 | Windows | 提供每用户后台服务与路径适配；本版 Windows 登录浏览器现场联测尚未完成 |
 | 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
 | 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |

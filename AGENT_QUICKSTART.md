@@ -1,6 +1,6 @@
 # Agent 快速上手
 
-适用于 0.8.1 · [安装](AGENT_INSTALL.md) · [完整工具目录](docs/TOOLS.md)
+适用于 0.8.2 · [安装](AGENT_INSTALL.md) · [完整工具目录](docs/TOOLS.md)
 
 ## 先发现，再固定任务连接
 

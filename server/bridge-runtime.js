@@ -18,6 +18,7 @@
   const BRIDGE = window.__RUNNINGHUB_CANVAS_BRIDGE_URL__ || "http://127.0.0.1:18765";
   const CLIENT_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let seq = 0;
+  let lastBrowserWake = 0;
   let pollTimer;
   let originalFetch;
   let OriginalXHR;
@@ -3002,6 +3003,7 @@
   };
 
   const pollCommands = async () => {
+    if(typeof window.postMessage==="function" && Date.now()-lastBrowserWake>10000){lastBrowserWake=Date.now();window.postMessage({type:"rh.canvasWake"},location.origin);}
     try {
       const versionResponse = await fetch(`${BRIDGE}/runtime-version`, { mode: "cors", cache: "no-store" });
       if (versionResponse.ok) {

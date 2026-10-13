@@ -40,7 +40,7 @@ test('layout rejects duplicate nodes and partial groups before mutation',()=>{
 test('account discovery exhausts pages and nested folders without exporting credentials',async()=>{
  const {readFile}=await import('node:fs/promises');const {runInNewContext}=await import('node:vm');
  const source=await readFile(new URL('../extension/background.js',import.meta.url),'utf8');
- const functionSource=source.slice(source.indexOf('async function listAccountCanvases'),source.indexOf('\nasync function pump'));
+ const functionSource=source.slice(source.indexOf('async function listAccountCanvases'),source.indexOf('\nconst transport='));
  const requests=[];
  const context={location:{origin:'https://rhtv.runninghub.ai'},document:{cookie:'Rh-Accesstoken=test-secret'},localStorage:{getItem:()=>null},atob,AbortSignal,URL,
   fetch:async(url,options)=>{const body=JSON.parse(options.body);requests.push({url,body,headers:options.headers});
@@ -63,4 +63,29 @@ test('browser jobs stay with the explicitly requested browser provider',()=>{
  const b=new BrowserBroker();const j=b.enqueue({action:'openCanvas',canvasUrl:'https://rhtv.runninghub.ai/project/canvas/123',browserSource:'codex-browser'});
  assert.equal(b.poll('browser-extension'),null);assert.equal(b.poll('codex-browser').id,j.id);
  assert.deepEqual(b.status().providers,['browser-extension','codex-browser']);
+});
+
+test('Codex new tabs satisfy the host active-tab requirement; normal browser tabs keep focus preference',async()=>{
+ const {readFile}=await import('node:fs/promises');const {runInNewContext}=await import('node:vm');const source=await readFile(new URL('../extension/background.js',import.meta.url),'utf8');
+ for(const provider of ['codex-browser','browser-extension']){
+  let options;const url='https://rhtv.runninghub.ai/project/canvas/123';
+  const context={RHCanvasSitePolicy:globalThis.RHCanvasSitePolicy,importScripts(){},setTimeout,chrome:{tabs:{query:async()=>[],create:async o=>{options=o;if(provider==='codex-browser'&&!o.active)throw Error('host requires active tab');return {id:1};},get:async()=>({id:1,url,status:'complete'})},scripting:{executeScript:async()=>[]}}};
+  const code=source.slice(0,source.indexOf('\nconst transport=')).replace("const BROWSER_SOURCE='browser-extension'",`const BROWSER_SOURCE='${provider}'`);
+  const result=await runInNewContext(code+`\nhandle({action:'openCanvas',canvasUrl:${JSON.stringify(url)},focus:false})`,context);assert.equal(result.ok,true);assert.equal(options.active,provider==='codex-browser');
+ }
+});
+
+test('first account request waits for an embedded tab to register and dispatches the API action only once',async()=>{
+ const {readFile}=await import('node:fs/promises');const {runInNewContext}=await import('node:vm');const source=await readFile(new URL('../extension/background.js',import.meta.url),'utf8');
+ const origin='https://rhtv.runninghub.ai',url=origin+'/projects/canvas/me';
+ for(const action of ['listCanvases','manageCanvas']){
+  let created=0,gets=0,dispatched=0;
+  const context={RHCanvasSitePolicy:globalThis.RHCanvasSitePolicy,importScripts(){},setTimeout:fn=>setTimeout(fn,0),chrome:{
+   tabs:{query:async()=>created?[{id:2,url,status:'complete'}]:[],create:async o=>{assert.equal(o.active,true);created++;return {id:1,url};},get:async id=>{gets++;if(id===1 || gets<3)throw Error('No tab with id: '+id+'.');return {id:2,url,status:'complete'};}},
+   scripting:{executeScript:async o=>{assert.equal(o.target.tabId,2);dispatched++;return [{result:{ok:true}}];}}
+  }};
+  const code=source.slice(0,source.indexOf('\nconst transport=')).replace("const BROWSER_SOURCE='browser-extension'","const BROWSER_SOURCE='codex-browser'");
+  const result=await runInNewContext(code+`\nhandle({action:${JSON.stringify(action)},origin:${JSON.stringify(origin)},operation:'renameCanvas',scope:'personal',body:{id:'123',name:'fixture'}})`,context);
+  assert.equal(result.ok,true);assert.equal(created,1);assert.equal(dispatched,1);assert.equal(gets,3);
+ }
 });

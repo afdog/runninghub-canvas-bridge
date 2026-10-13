@@ -40,7 +40,7 @@ mkdirSync(distDir, { recursive: true });
 if (existsSync(zipPath)) rmSync(zipPath);
 if (existsSync(checksumPath)) rmSync(checksumPath);
 
-writeFileSync(zipPath,zipFiles(["manifest.json", "keepalive.js", "background.js", "site-policy.js", "bridge-main.js", "LICENSE", "UPSTREAM.md"].map(name=>({name,bytes:readFileSync(resolve(extensionDir,name))}))));
+writeFileSync(zipPath,zipFiles(["manifest.json", "browser-pump.js", "keepalive.js", "background.js", "site-policy.js", "bridge-main.js", "LICENSE", "UPSTREAM.md"].map(name=>({name,bytes:readFileSync(resolve(extensionDir,name))}))));
 
 const bytes = readFileSync(zipPath);
 const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -66,7 +66,7 @@ console.log(
 // Codex built-in browser uses the same extension APIs, with explicit routing identity.
 const codexDir=resolve(distDir,'runninghub-canvas-bridge-codex-extension');
 mkdirSync(codexDir,{recursive:true});
-for(const name of ['manifest.json','keepalive.js','background.js','site-policy.js','bridge-main.js','LICENSE','UPSTREAM.md']){
+for(const name of ['manifest.json','browser-pump.js','keepalive.js','background.js','site-policy.js','bridge-main.js','LICENSE','UPSTREAM.md']){
  let content=readFileSync(resolve(extensionDir,name),'utf8');
  if(name==='manifest.json'){const m=JSON.parse(content);m.name='RunningHub Canvas Bridge — Codex';content=JSON.stringify(m,null,2)+'\n';}
  if(name==='background.js'||name==='bridge-main.js')content=content.replaceAll('browser-extension','codex-browser');
@@ -75,6 +75,6 @@ for(const name of ['manifest.json','keepalive.js','background.js','site-policy.j
 console.log(JSON.stringify({codexUnpackedExtension:codexDir}));
 
 const codexBase=`${packageJson.name}-codex-extension-v${packageJson.version}`;
-const codexZip=zipFiles(['manifest.json','keepalive.js','background.js','site-policy.js','bridge-main.js','LICENSE','UPSTREAM.md'].map(name=>({name,bytes:readFileSync(resolve(codexDir,name))})));
+const codexZip=zipFiles(['manifest.json','browser-pump.js','keepalive.js','background.js','site-policy.js','bridge-main.js','LICENSE','UPSTREAM.md'].map(name=>({name,bytes:readFileSync(resolve(codexDir,name))})));
 writeFileSync(resolve(distDir,codexBase+'.zip'),codexZip);
 writeFileSync(resolve(distDir,codexBase+'.sha256'),createHash('sha256').update(codexZip).digest('hex')+'  '+codexBase+'.zip\n');

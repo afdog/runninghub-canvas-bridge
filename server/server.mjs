@@ -42,7 +42,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.8.1";
+const PRODUCT_VERSION = "0.8.2";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -180,7 +180,8 @@ const server = http.createServer(async (req, res) => {
       if(origin && !browserExtension)return json(res,403,{error:'LOCAL_CLIENT_ONLY'});
       if(url.pathname==='/browser/status' && req.method==='GET')return json(res,200,browserBroker.status());
       if(url.pathname==='/browser/poll' && req.method==='GET'){
-        const until=Date.now()+18000;let job;
+        const requestedWait=Number(url.searchParams.get('waitMs') ?? 18000);
+        const until=Date.now()+(Number.isFinite(requestedWait)?Math.max(0,Math.min(18000,requestedWait)):18000);let job;
         while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension')) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
         return json(res,200,job || null);
       }
