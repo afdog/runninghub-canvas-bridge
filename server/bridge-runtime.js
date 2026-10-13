@@ -71,6 +71,8 @@
   const postEvent = (event) => {
     const payload = {
       clientId: CLIENT_ID,
+      browserSource: window.__RUNNINGHUB_CANVAS_BRIDGE_BROWSER_SOURCE__ || "unknown",
+      browserInstanceId: window.__RUNNINGHUB_CANVAS_BRIDGE_BROWSER_INSTANCE__ || null,
       seq: ++seq,
       ts: Date.now(),
       href: location.href,
@@ -361,7 +363,7 @@
   });
 
   const changedFieldPaths = (before, after, prefix = "", out = []) => {
-    if (Object.is(before, after)) return out;
+    if (Object.is(before, after) || JSON.stringify(before) === JSON.stringify(after)) return out;
     if (
       before === null ||
       after === null ||
@@ -497,13 +499,14 @@
       };
     }, { write: !command.dryRun });
 
-  const replaceCanvasSnapshot = async ({ snapshot, expected } = {}) => {
+  const replaceCanvasSnapshot = async ({ snapshot, expected, dryRun = false } = {}) => {
     if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
       throw new Error("snapshot with nodes and edges is required");
     }
     return withCanvasYjs(({ Y, doc, nodes, edges, canvasId }) => {
       const before = { canvasId, nodes: yArrayToJson(nodes), edges: yArrayToJson(edges) };
       if (!expected || JSON.stringify(before) !== JSON.stringify(expected)) throw new Error("ROLLBACK_CONFLICT: canvas changed after the operation");
+      if(dryRun)return {dryRun:true,applied:false,diff:diffCanvasSnapshots(before,snapshot)};
       doc.transact(() => {
         if (edges.length) edges.delete(0, edges.length);
         if (nodes.length) nodes.delete(0, nodes.length);
@@ -512,7 +515,7 @@
       });
       const after = { canvasId, nodes: yArrayToJson(nodes), edges: yArrayToJson(edges) };
       return { applied: true, diff: diffCanvasSnapshots(before, after) };
-    }, { write: true });
+    }, { write: !dryRun });
   };
 
   const rollbackCanvas = async ({ rollbackId } = {}) => {
@@ -1642,12 +1645,20 @@
     const target = targetId || nodeId || id;
     if (!target) throw new Error("nodeId is required");
     const schemaNode=validateParams || expectedDigest || expected ? (await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx))).nodes.find(n=>n.id===target) : null;
-    const fields=schemaNode ? await featureTools.fieldsFor(schemaNode) : null;
+    const isApp=schemaNode?.type==='rh-ai';
+    const fields=schemaNode && !isApp ? await featureTools.fieldsFor(schemaNode) : null;
     const payload = await withCanvasYjs(async ({ nodes, edges, canvasId }) => {
       const currentNodes = yArrayToJson(nodes);
       const currentEdges = yArrayToJson(edges);
       const targetNode = currentNodes.find((node) => node?.id === target);
       if (!targetNode) throw new Error(`Node not found: ${target}`);
+      if(isApp){
+        const checked=await globalThis.RHProductionFeatures.appPreflight({nodes:currentNodes,edges:currentEdges},target);
+        if(!checked.ok)throw new Error('APP_PREFLIGHT_FAILED: '+checked.errors.join('; '));
+        if(expectedDigest&&checked.digest!==expectedDigest)throw new Error('EDIT_CONFLICT: app inputs changed');
+        if(FEATURES.canonical({nodes:currentNodes,edges:currentEdges})!==FEATURES.canonical({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)}))throw new Error('EDIT_CONFLICT: app graph changed during validation');
+        return {canvasId,targetType:'NODE',targetId:target,canvas:{nodes:[checked.resolvedNode],edges:[]}};
+      }
       if(fields) {
         if(targetNode.data?.modelCode!==schemaNode.data?.modelCode || targetNode.data?.subType!==schemaNode.data?.subType) throw new Error('EDIT_CONFLICT: model changed during validation');
         const snapshot={nodes:currentNodes,edges:currentEdges};
@@ -2810,17 +2821,21 @@
       return { deletedNodes, deletedEdges };
     });
 
-  const featureTools = FEATURES.create({
-    api: async (endpoint,body) => {
+  const platformApi = async (endpoint,body) => {
+      if(endpoint==='/api/webapp/user/list')body={...body,userId:sessionUserId(sessionToken())};
       const response=await fetch(new URL(endpoint,SITE_POLICY.parseCanvas(location.href).apiOrigin),{method:'POST',headers:authHeaders(),credentials:'include',body:JSON.stringify(body)});
       if(!response.ok) throw new Error(`PLATFORM_API_ERROR: ${response.status}`);
       const payload=await response.json();
       if(payload.code!==undefined && Number(payload.code)!==0) throw new Error(`PLATFORM_API_ERROR: ${payload.code}: ${String(payload.msg || payload.message || "").slice(0,250)}`);
       return payload.data ?? payload;
-    },
+    };
+  const featureTools = FEATURES.create({
+    api:platformApi,
     withMutation:withCanvasMutation,
     readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,getTitle:getNodeTitle
   });
+
+  const productionTools = globalThis.RHProductionFeatures?.create({api:platformApi,withMutation:withCanvasMutation,readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,models:featureTools}) || {};
 
   const executeCommand = async (command) => {
     if (!command || !command.id) return;
@@ -2839,7 +2854,11 @@
         }
       }
       const featureName=command.type?.replace(/^canvas\./,'');
-      if (Object.hasOwn(featureTools,featureName)) {
+      if (Object.hasOwn(productionTools,featureName)) {
+        result=await productionTools[featureName](command);
+      } else if (command.type==='canvas.preflight' && globalThis.RHProductionFeatures && (await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx))).nodes.find(n=>n.id===command.nodeId)?.type==='rh-ai') {
+        result=await productionTools.appPreflight(command);
+      } else if (Object.hasOwn(featureTools,featureName)) {
         result = await featureTools[featureName](command);
       } else if (command.type === "graph.snapshot") {
         result = summarizeGraph();
@@ -2944,6 +2963,19 @@
         result = await deleteElements(command);
       } else if (command.type === "canvas.getDetail") {
         result = await postJson("/canvas/getCanvasDetail", { id: SITE_POLICY.parseCanvas(location.href).canvasId }, command.maxChars);
+      } else if (command.type === 'canvas.applyLayoutTemplate') {
+        result=await withCanvasMutation(command,({Y,doc,nodes,edges,canvasId})=>{
+          const plan=globalThis.RHLayoutTemplate.plan({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges),canvasId},command.groups,command.options);
+          const updates=new Map(plan.updates.map(n=>[n.id,n]));
+          doc.transact(()=>{
+            for(let i=0;i<nodes.length;i++){
+              const old=nodes.get(i)?.toJSON?.() || nodes.get(i);const next=updates.get(old.id);
+              if(next){nodes.delete(i,1);nodes.insert(i,[toYValue(Y,next)]);updates.delete(old.id);}
+            }
+            for(const n of updates.values())nodes.push([toYValue(Y,n)]);
+          });
+          return {templateId:plan.templateId,nodeIds:plan.nodeIds,groupIds:plan.groupIds,edgesChanged:0,deletedNodes:0};
+        });
       } else if (command.type === "canvas.workflowList") {
         result = await postJson("/canvas/workflow/list", { canvasId: SITE_POLICY.parseCanvas(location.href).canvasId }, command.maxChars);
       } else if (command.type === "api.post") {

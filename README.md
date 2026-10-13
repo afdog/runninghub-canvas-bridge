@@ -1,82 +1,121 @@
+<div align="center">
+
+<img src="docs/assets/hero.svg" alt="RunningHub Canvas Bridge — From conversation to canvas" width="100%" />
+
 # RunningHub Canvas Bridge
 
-用 MCP 直接操作 RunningHub 无限画布：读取完整提示词、复制模型模板、批量排版、连接参考、上传图片及音视频、提交生成和归档结果。通过本地服务与 Chrome 扩展使用当前登录会话，支持国际站 `www.runninghub.ai` / `rhtv.runninghub.ai`，保留中国站地址识别。
+**让 AI 通过 MCP 操作 RunningHub 无限画布。**
 
-## 功能
+发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-- 35 个标准 MCP 工具，配套 HTTP 与 CLI，可接入 Codex 或其他支持 stdio MCP 的客户端。
-- 图片、视频、音频上传和生成入口均可用。三类上传已在国际站实测；生成已验证请求预览及模拟提交，本次没有额外提交真实生成。
-- 支持文本创建、编辑、移动、连线、删除、刷新后回读，以及空白 H3 模板复制预览。
-- 按完整画布网址选择操作目标，支持多标签页。编辑前选择 `allowWrites: true`，无需每次重启服务。
-- 登录凭据留在网页内；同步与上传依赖随服务本地加载。
+[![Version](https://img.shields.io/badge/version-0.8.1-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![MCP](https://img.shields.io/badge/MCP-73_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
+[![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
+[![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
 
-## 安装
+[**开始安装**](AGENT_INSTALL.md) · [**Agent 接入**](AGENT_QUICKSTART.md) · [**工具目录**](docs/TOOLS.md) · [**下载发布包**](https://github.com/limyum-creator/runninghub-canvas-bridge/releases/latest)
 
-需要 Node.js 20.19+、ffmpeg/ffprobe 和已登录 RunningHub 的 Chrome。源码与安装包位于本仓库的 [Releases](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)，无需 npm 注册表发布。
+</div>
+
+---
+
+## 从对话到画布
+
+把重复的开页、填参数、连参考、整理和下载交给 AI。桥接复用浏览器中已登录的 RunningHub 会话，让支持 MCP 的客户端直接操作画布，减少逐步点击和截图识别。
+
+支持国际站 `www.runninghub.ai` / `rhtv.runninghub.ai`；保留中国站地址适配。可使用 **Codex 内置浏览器、Chrome 或 Edge**，通过本机 stdio MCP 接入，也可通过 Secure MCP Tunnel 接入 ChatGPT 个人插件。
+
+| 制作准备 | 画布操作 | 结果管理 |
+| :--- | :--- | :--- |
+| 查询账号全部画布并自动打开 | 创建模型或原生 AI 应用节点 | 查询任务状态与生成历史 |
+| 读取实时模型和应用参数 | 修改提示词、参数和素材绑定 | 独立下载图片、视频和音频 |
+| 上传本机素材或接收聊天附件 | 分组、对齐、缩放与模板排版 | 保存、比较和恢复画布快照 |
+| 提交前检查输入与参考 | 批量准备镜头和提交生成 | 复用工作流、素材及历史输出 |
+
+### 内置浏览器也能接入
+
+安装专用扩展后，**不需要外部 Chrome 提供画布连接**。打开画布和账号目录请求优先使用在线的内置浏览器，也可明确指定浏览器来源。仍需本机桥接服务运行。
+
+### 多个对话，各自操作自己的画布
+
+每个任务持有独立 `scopeId`；自动开页会固定到具体页面。其他对话选择另一张画布，不会改变当前任务的目标。页面刷新或连接失效后重新打开获取连接，同一画布的写入仍需遵守版本检查。
+
+### 原生 AI 应用与普通模型都可配置
+
+直接读取原生应用的输入字段，修改时长、比例、种子等参数，绑定图片、视频、音频或文本参考。应用节点使用专用预检和运行路径，不再要求普通模型节点的 `modelCode`。
+
+### 下载不依赖归档软件
+
+按节点或准确的历史任务下载结果，查看进度、校验文件、重试失败任务；服务器支持且存在校验标识时可续传。光栈（Lumen）自动归档为可选集成。
+
+## 快速开始
+
+**准备：** Node.js 20.19+、ffmpeg/ffprobe，以及一个已登录 RunningHub 的受支持浏览器。
 
 ```sh
 git clone https://github.com/limyum-creator/runninghub-canvas-bridge.git
 cd runninghub-canvas-bridge
 npm ci
 npm run build
-RH_BRIDGE_ALLOW_GENERATION=1 npm start
+npm run release:package
+npm start
 ```
 
-在 `chrome://extensions/` 打开开发者模式，加载本项目 `extension` 文件夹，刷新需要操作的画布。Chrome 的本地网络权限用于连接本机 `http://127.0.0.1:18765`。
+然后加载浏览器扩展：
 
-macOS 可改为后台常驻，无需保留终端：
-
-```sh
-RH_BRIDGE_ALLOW_GENERATION=1 npm run service:install
-npm run service:status
-```
-
-不要同时启动手动服务与后台服务。后台安装会记住生成开关及当前画布权限，登录后自动启动。其他系统可使用手动服务。
-
-为 Codex 添加 MCP，替换为实际绝对路径：
-
-```sh
-codex mcp add runninghub-canvas -- /absolute/path/to/node /absolute/path/to/runninghub-canvas-bridge/server/mcp.mjs
-```
-
-其他 stdio MCP 客户端使用相同命令与参数。Chrome、桥接服务和 MCP 应在同一台电脑运行。
-
-## 使用
-
-先调用 `rh_status`，从返回的已连接网址调用 `rh_select_canvas`；需要编辑、上传或运行时设 `allowWrites: true`。
-
-| 用途 | MCP 工具 |
+| 浏览器 | 选择的扩展目录 |
 | --- | --- |
-| 连接与选画布 | `rh_status`、`rh_select_canvas` |
-| 读节点与参考 | `rh_canvas_summary`、`rh_get_node`、`rh_find_nodes`、`rh_connections` |
-| 建立与修改 | `rh_create_text_nodes`、`rh_clone_template`、`rh_update_node`、`rh_update_params` |
-| 排版与连线 | `rh_move_nodes`、`rh_connect_nodes`、`rh_delete_elements` |
-| 上传 | `rh_upload_image`（兼容）和 `rh_upload_media`：图片 30 MiB，音频 50 MiB，视频 500 MiB |
-| 自动归档 | `rh_set_archive_target`、`rh_archive_outputs`、`rh_archive_status`、`rh_retry_archive` |
-| 生成与结果 | `rh_validate_node`、`rh_run_node`、`rh_node_result`、`rh_command_result` |
+| Codex / 桌面应用内置浏览器 | `dist/runninghub-canvas-bridge-codex-extension` |
+| Chrome / Edge | `extension` |
 
-编辑和生成支持 `dryRun` 预览，上传不支持预览。H3 从真正空白模板复制，按实时模型字段设置参数。操作后回读完整节点核对文本、参考与参数。
+在浏览器扩展管理器选择“加载未打包的扩展程序”。内置浏览器的入口是 **设置 → 浏览器 → 扩展程序管理器 → 管理**。下载 ZIP 时先解压，再选择包含 `manifest.json` 的目录。
 
-若现有客户端尚未重新加载 MCP，可通过标准 MCP 客户端立即使用：
+将 `server/mcp.mjs` 配置为客户端的 stdio MCP 入口，即可开始。**完整配置、Windows 命令、后台服务与 ChatGPT 插件接入见 [安装说明](AGENT_INSTALL.md)。** 默认启动不启用生成；需要生成时按安装说明设置 `RH_BRIDGE_ALLOW_GENERATION=1`。
 
-```sh
-node scripts/mcp-call.mjs rh_status
-node scripts/mcp-call.mjs rh_canvas_summary --canvas '已连接的完整画布网址'
+## 一次典型调用
+
+```text
+rh_list_canvases               查询账号目录
+        ↓
+rh_open_canvas                打开目标，取得独立 scopeId
+        ↓
+rh_get_layout_template        读取持久排版规范
+        ↓
+rh_canvas_summary / get_node  检查已有内容
+        ↓
+配置节点 → 绑定素材 → preflight → run_node
+        ↓
+查询任务 → 下载结果 → 可选归档
 ```
 
-生成和上传使用稳定的 `requestId`。提交超时用 `rh_command_result` 查原请求并读节点状态；去重仅在当前桥接进程存活期间有效，服务重启后也不能盲目重发。节点可能保留上次生成结果，应按本次 taskId 匹配。
+后续画布调用都携带自己的 `scopeId`。需要修改时打开连接须设置 `allowWrites: true`；生成使用独立的稳定 `requestId`。超时先查询原回执，不盲目重发。
 
-## 可选：光栈（Lumen）自动归档
+## 能力与验证边界
 
-画布读取、编辑、上传、生成和结果查询不依赖光栈。自动归档工具目前对接光栈 MCP，需要另行安装并配置光栈；未设置归档目标时，`rh_run_node` 仅提交平台任务。
+| 项目 | 当前情况 |
+| --- | --- |
+| 工具 | 73 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
+| macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
+| 自动测试 | 本地 52 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
+| Windows | 提供每用户后台服务与路径适配；本版 Windows 登录浏览器现场联测尚未完成 |
+| 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
+| 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |
+| 中国站 | 保留地址与协议适配；本版现场验收以国际站为主 |
 
-使用归档时，先确定目标项目与作品（Work），再用 `rh_set_archive_target` 绑定节点。后续 `rh_run_node` 自动登记回收任务，按本次 taskId 回收全部结果，下载、核验 SHA 与媒体信息，通过光栈 MCP 预览和导入，并回读版本。已有任务可用 `rh_archive_outputs` 登记。归档状态存于 `~/.runninghub-canvas-bridge/archives`，重启后继续；需要处理时保留全部已下载文件与原导入请求。项目身份登记、素材采用与定版遵循调用方自己的制作规则，归档不会代替这些决定。
+实时模型、登录状态、平台接口和账号权益会影响可用性。详见 [验证说明](docs/international-validation.md)。
 
-实测边界见 [验证记录](docs/international-validation.md)。音视频上传与隔离光栈库的真实导入已验证，生成完成信号在测试中模拟。真实生成闭环、资产抽屉检索和多用户同时编辑尚未验证。
+## 文档导航
 
-格式：PNG/JPEG/WebP、MP4/MOV/WebM、MP3/WAV/M4A/AAC/FLAC/OGG。媒体按真实内容识别；视频/音频通过仅限当前页面的短时本机文件链接上传。归档遵守光栈当前单文件 256 MiB 上限。光栈 MCP 配置默认读取其本机 `mcp-client.json`，可用 `RH_LUMEN_MCP_CONFIG` 指定。已在光栈 0.8.8（22.20）完整安装包验证：已登记空 Work 的首版导入、连续两份输出归档、原请求重试及归档服务重启，保持原 Work 且不重复版本。旧版光栈需完整更新 App；接口故障时下载文件保留，可修复后 `rh_retry_archive`，不另建 Work 绕过归属。
+| 文档 | 内容 |
+| --- | --- |
+| [安装说明](AGENT_INSTALL.md) | 浏览器扩展、本机 MCP、后台服务、ChatGPT 插件、升级 |
+| [Agent 快速上手](AGENT_QUICKSTART.md) | 任务连接、应用参数、媒体、下载、冲突与恢复 |
+| [73 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
+| [更新记录](CHANGELOG.md) | 版本变化与兼容性调整 |
+| [贡献指南](CONTRIBUTING.md) | 开发和反馈 |
 
-## 开发与打包
+<details>
+<summary><strong>开发与打包</strong></summary>
 
 ```sh
 npm run check
@@ -86,37 +125,9 @@ npm run release:package
 npm pack --pack-destination dist
 ```
 
-扩展 ZIP 与源码包输出到 `dist/`。扩展需配套本地服务运行，端口统一为 18765。以本文和实时能力为准。改动见 [CHANGELOG.md](CHANGELOG.md)。
+`dist/` 包含普通扩展、内置浏览器专用扩展及校验文件。源码包包含本地运行所需模块。登录凭据留在网页内；私有安装笔记、任务回执和项目素材不应提交到仓库。
 
-## v0.5 功能
-
-- `rh_search_assets` 浏览或搜索平台资产库，`rh_add_asset` 复用图片、视频、音频；同一 URL 已在画布时复用现有节点。资产选择有效期 15 分钟，需保持同一个 MCP 连接及画布标签页。
-- `rh_inspect_references` 识别实际媒体输出，包括 `rh-ai` 节点；`rh_bind_references` 按实时参数名写入参考并连接节点。多个输出时明确选择 URL，未指定的参考槽保持原状。
-- `rh_list_models` / `rh_model_schema` 实时读取模型及参数配置，返回选项、默认值、范围和原始条件；不据此推断价格、权益或可生成性。
-- MCP 连接独立保存所选画布与读写范围。同一画布的桥接修改串行执行。`rh_get_node` 返回版本指纹，`rh_batch_update_nodes` 要求逐节点版本；版本不匹配时整批拒绝。普通参数和节点修改也可传 `expectedRevisions`。
-
-版本检查针对已同步的节点和连线，不能替代平台对跨浏览器编辑的全局事务。提交后断连且没有回执的修改保持未知，不自动重发；后续修改可能排队超时，需要核对画布再重启服务。
-
-## Windows
-
-Windows 10/11 使用 Node.js 20.19+、Chrome 或 Edge，以及 PATH 中的 `ffprobe.exe`（或设置 `RH_FFPROBE` 为完整路径）。在项目目录执行 `npm ci`、`npm run build`，然后 `npm run service:install`。扩展加载步骤与 macOS 相同。
-
-后台服务使用当前用户的登录启动目录，无需管理员权限。支持 `service:start`、`service:stop`、`service:restart`、`service:status`、`service:uninstall`。运行日志位于用户主目录 `.runninghub-canvas-bridge/logs`，卸载保留归档与配置。企业策略禁用 Windows Script Host 时可用 `npm start` 前台运行。
-
-PowerShell 如需开启生成，在安装服务前设置 `$env:RH_BRIDGE_ALLOW_GENERATION="1"`。可选光栈归档需设置 `$env:RH_LUMEN_MCP_CONFIG` 指向光栈导出的 MCP 配置文件；未配置不影响画布编辑和生成。文件路径必须属于运行 MCP/桥接的同一台电脑。
-
-验证范围：国际站 Chrome 测试画布已验证资产复用、图片/音频参考写入、实时 H3 参数和冲突拒绝，未提交生成。Windows CI 覆盖 MCP、画布协议模拟、媒体归档、中文路径、后台服务安装/重启/卸载及 ZIP 解包；Windows 浏览器登录后的现场操作尚未单独验证。
-
-## v0.6 工作流优化
-
-- 完整参考清单替换／清空，同时清理能够确认属于旧参考的连线。
-- 修改参数时读取实时模型约束；提交前可比对准确正文、参考和图版本。
-- `rh_prepare_shots` 一次准备多个镜头：复制空模板、填词、绑参考、避让排版、可选归档绑定。
-- 命令回执跨重启保存，`rh_recover_command` 查询原请求，结果不明时不会自动重发。
-- `rh_auto_layout` 局部自动排版；已有分组画布仍使用明确坐标移动。
-- `rh_diagnose` / `doctor` 给出 Windows、macOS、Linux 的连接与依赖诊断。
-
-项目的剧情、台词规范与制作资料由调用方提供，不内置在插件。批量准备不提交生成；语义与视听质量仍由制作 Agent 审核。详细输入与恢复方法见 [AGENT_QUICKSTART.md](AGENT_QUICKSTART.md)。
+</details>
 
 ## 参考
 

@@ -90,6 +90,12 @@ test("local HTTP bridge restricts origins, commands, and stale/incorrect client 
 
   // Two tabs on the same canvas must share the mutation lock.
   await post('/events',{href,kind:'bridge.installed',clientId:'second-tab',runtimeVersion:runtime.version},{Origin:origin});
+  const pinned=(await (await post('/sessions',{canvasUrl:href,allowWrites:false,clientId:'fixture-client'})).json()).sessionId;
+  assert.equal((await (await post('/command',{type:'canvas.summary',clientId:'second-tab',sessionId:pinned})).json()).errorCode,'SESSION_CLIENT_MISMATCH');
+  const repinned=await (await post('/sessions',{canvasUrl:href,allowWrites:false,clientId:'second-tab',sessionId:pinned})).json();
+  assert.notEqual(repinned.sessionId,pinned);
+  assert.equal((await (await fetch(base+'/sessions?id='+pinned)).json()).access.clientId,'fixture-client');
+
   await post('/command',{...edit,id:'tab-one'});
   await post('/command',{...edit,id:'tab-two',clientId:'second-tab'});
   assert.equal((await poll())[0].id,'tab-one');

@@ -23,26 +23,47 @@ export class BridgeClient {
     if (!response.ok) throw new Error(value.errorCode || value.error || `HTTP ${response.status}`);
     return value;
   }
-  async status() {
-    const [health, clients] = await Promise.all([this.request("/health"), this.request("/clients")]);
-    const session = this.sessionId ? await this.request('/sessions?id='+encodeURIComponent(this.sessionId)) : null;
-    return { ...health, legacyAccess:health.access, access:session?.access || null, sessionId:this.sessionId, sessionState:!this.sessionId?'unselected':session?.access?'selected':'expired', selectedCanvas: this.canvasUrl, clients: clients.map(c => ({ clientId: c.clientId, canvasUrl: c.href, title: c.title, runtimeFreshness: c.runtimeFreshness })) };
+  async browserJob(args){
+    const health=await this.request('/browser/status');
+    args={...args,browserSource:args.browserSource || (health.providers?.includes('codex-browser')?'codex-browser':'browser-extension')};
+    if(health.providers?.length && !health.providers.includes(args.browserSource))throw new Error('REQUESTED_BROWSER_OFFLINE: '+args.browserSource);
+    if(!health.connected)throw new Error('BROWSER_EXTENSION_OFFLINE: load the bridge extension in the requested browser and keep it running');
+    const {id}=await this.request('/browser/jobs',args);
+    const until=Date.now()+180000;
+    while(Date.now()<until){const job=await this.request('/browser/result?id='+encodeURIComponent(id));if(job.result){if(job.result.ok===false)throw new Error(job.result.error);return {...job.result,browserSource:args.browserSource};}await pause(300);}
+    return {ok:false,state:'unknown',browserRequestId:id,nextAction:'Read /browser/result with this ID before opening again.'};
   }
-  async select(canvasUrl, allowWrites) {
+  async open(canvasUrl,allowWrites=false,focus=false,browserSource){
+    const opened=await this.browserJob({action:'openCanvas',canvasUrl,focus,browserSource});if(opened.ok===false)return opened;
+    for(let i=0;i<60;i++){
+      const clients=await this.request('/clients');
+      const match=clients.find(c=>policy.parseCanvas(c.href)?.key===policy.parseCanvas(canvasUrl)?.key && c.runtimeFreshness==='fresh' && (!opened.browserSource || c.browserSource===opened.browserSource));
+      if(match)return {...opened,...await this.select(canvasUrl,allowWrites,match.clientId)};
+      await pause(500);
+    }
+    return {ok:false,canvasUrl,opened:true,error:'CANVAS_CONNECTION_PENDING: page opened; check rh_status before retrying'};
+  }
+  async status() {
+    const [health, clients, browsers] = await Promise.all([this.request("/health"), this.request("/clients"), this.request("/browser/status")]);
+    const session = this.sessionId ? await this.request('/sessions?id='+encodeURIComponent(this.sessionId)) : null;
+    return { ...health, browsers, legacyAccess:health.access, access:session?.access || null, sessionId:this.sessionId, sessionState:!this.sessionId?'unselected':session?.access?'selected':'expired', selectedCanvas: this.canvasUrl, clients: clients.map(c => ({ clientId: c.clientId, canvasUrl: c.href, title: c.title, runtimeFreshness: c.runtimeFreshness, browserSource:c.browserSource || "unknown", browserInstanceId:c.browserInstanceId || null })) };
+  }
+  async select(canvasUrl, allowWrites, clientId) {
+    this.pinnedClientId = clientId || null;
     const canvas = policy.parseCanvas(canvasUrl);
     if (!canvas) throw new Error("INVALID_CANVAS_URL");
     for(let attempt=0;attempt<15;attempt++) {
       const clients=await this.request('/clients');
-      if(clients.some(c=>policy.parseCanvas(c.href)?.key===canvas.key))break;
+      if(clients.some(c=>policy.parseCanvas(c.href)?.key===canvas.key && (!clientId || c.clientId===clientId)))break;
       if(attempt===14)throw new Error('CANVAS_NOT_CONNECTED');
       await pause(400);
     }
     let result;
-    try { result = await this.request("/sessions", { canvasUrl, allowWrites, ...(this.sessionId ? {sessionId:this.sessionId} : {}) }); }
+    try { result = await this.request("/sessions", { canvasUrl, allowWrites, ...(clientId?{clientId}:{}), ...(this.sessionId ? {sessionId:this.sessionId} : {}) }); }
     catch(error) {
       if(!String(error.message).startsWith('SESSION_EXPIRED')) throw error;
       this.sessionId=null;
-      result=await this.request('/sessions',{canvasUrl,allowWrites});
+      result=await this.request('/sessions',{canvasUrl,allowWrites,...(clientId?{clientId}:{})});
     }
     this.sessionId = result.sessionId;
     this.canvasUrl = new URL(canvasUrl).origin + new URL(canvasUrl).pathname;
@@ -54,12 +75,12 @@ export class BridgeClient {
     const expected = policy.parseCanvas(this.canvasUrl);
     for (let attempt = 0; attempt < 15; attempt++) {
       const clients = await this.request("/clients");
-      const candidates = clients.filter(c => policy.parseCanvas(c.href)?.key === expected.key && c.runtimeFreshness === "fresh");
+      const candidates = clients.filter(c => policy.parseCanvas(c.href)?.key === expected.key && c.runtimeFreshness === "fresh" && (!this.pinnedClientId || c.clientId === this.pinnedClientId));
       const match = candidates.find(c=>c.clientId===this.clientId) || candidates[0];
       if (match) { this.clientId = match.clientId; return { clientId: match.clientId, canvasId: expected.canvasId, canvasOrigin: expected.origin }; }
       await pause(400);
     }
-    throw new Error("CANVAS_NOT_CONNECTED: open or refresh the selected canvas in Chrome");
+    throw new Error("CANVAS_NOT_CONNECTED: reopen the selected canvas in its requested browser; a pinned page never falls back to another browser");
   }
   wireId(id) { return this.canvasUrl && !/^rh-[a-f0-9]{64}$/.test(id) ? 'rh-'+createHash('sha256').update(this.canvasUrl+':'+id).digest('hex') : id; }
   async command(type, args = {}, { id = randomUUID(), timeoutMs = 45000 } = {}) {

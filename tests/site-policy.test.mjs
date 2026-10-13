@@ -31,8 +31,9 @@ test("writes need both the exact canvas and origin; generation follows explicit 
   assert.equal(policy.authorizeCommand(edit, access, canvas), null);
   assert.equal(policy.authorizeCommand(edit, { ...access, canvasId: "124" }, canvas), "CANVAS_NOT_ALLOWED");
   assert.equal(policy.authorizeCommand(edit, { ...access, origin: "https://www.runninghub.cn" }, canvas), "SITE_NOT_ALLOWED");
-  for (const type of ["page.eval", "api.post", "canvas.restoreSnapshot"])
+  for (const type of ["page.eval", "api.post"])
     assert.equal(policy.authorizeCommand({ type, dryRun: true }, access, canvas), "COMMAND_DISABLED");
+  assert.equal(policy.authorizeCommand({type:"canvas.restoreSnapshot"},{},canvas),"READ_ONLY");
   assert.equal(policy.authorizeCommand({ ...edit, dryRun: true }, {}, canvas), null);
   assert.equal(policy.authorizeCommand({ type: "canvas.summary", broadcast: true }, access, canvas), "BROADCAST_DISABLED");
 });

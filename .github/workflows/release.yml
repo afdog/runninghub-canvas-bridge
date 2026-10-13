@@ -49,17 +49,18 @@ jobs:
 
           Assets:
           - npm CLI tarball: runninghub-canvas-bridge-${VERSION}.tgz
-          - Chrome extension: runninghub-canvas-bridge-extension-v${VERSION}.zip
+          - Chrome / Edge extension: runninghub-canvas-bridge-extension-v${VERSION}.zip
+          - Codex built-in browser extension: runninghub-canvas-bridge-codex-extension-v${VERSION}.zip
           - Extension checksum: runninghub-canvas-bridge-extension-v${VERSION}.sha256
 
           Install:
           - GitHub asset: npm install -g ./runninghub-canvas-bridge-${VERSION}.tgz
           - Source: https://github.com/${GITHUB_REPOSITORY}
-          - Requires Node.js 20.19+, ffmpeg/ffprobe and logged-in Chrome.
+          - Requires Node.js 20.19+, ffmpeg/ffprobe and a logged-in supported browser.
 
           Browser extension:
           1. Download and unzip runninghub-canvas-bridge-extension-v${VERSION}.zip.
-          2. Open chrome://extensions/.
+          2. For the built-in browser, use its dedicated ZIP and Settings > Browser > Extension manager. For Chrome/Edge, open the browser extension manager.
           3. Enable Developer mode.
           4. Load unpacked and select the unzipped extension directory.
           5. Run runninghub-canvas-bridge doctor.

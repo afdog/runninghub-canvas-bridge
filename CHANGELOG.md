@@ -1,3 +1,21 @@
+# Changelog
+
+## 0.8.1
+
+Added a separately labelled unpacked extension build for the Codex built-in browser, explicit browser-provider routing for account/open jobs, and server-enforced page pinning for task scopes. Source metadata is visible in status.
+
+## 0.8.0
+
+Added production downloads, native AI app operations, task/history tools, canvas and asset organization, workflows, snapshot recovery and ChatGPT file receipt tools. Canvas calls now require independent task scopes to prevent shared-client selection races. Browser workers process independent jobs concurrently; account writes persist deduplication receipts. Fixed immediate retry after download failure.
+
+
+## 0.7.0
+
+- List personal/team canvases across pages and nested folders through the browser.
+- Open or reuse requested canvas tabs and select after connection.
+- Persistent scene/shot layout defaults and per-canvas geometry, with native group planning.
+- Browser result recovery and Chrome/Edge service worker; no account credentials leave the page.
+
 ## 0.6.0
 
 - Add complete reference replacement/clearing with precise old-edge cleanup.
@@ -16,7 +34,6 @@
 - Add Windows per-user background startup, media-tool discovery and portable ZIP packaging.
 - Add Linux/macOS/Windows CI, including Windows Unicode-path launcher and service lifecycle checks.
 
-# Changes
 
 ## 0.4.0 — 2026-09-27
 

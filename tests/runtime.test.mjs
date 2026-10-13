@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import {webcrypto} from "node:crypto";
+const productionSource=await readFile(new URL("../server/production-features.js",import.meta.url),"utf8");
 const featureSource=await readFile(new URL("../server/canvas-features.js",import.meta.url),"utf8");
 import * as Y from "yjs";
 import * as decoding from "lib0/decoding";
@@ -55,7 +56,7 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
     }
   };
   sandbox.window = sandbox;
-  vm.runInNewContext(siteSource + "\n" + featureSource + "\n" + runtimeSource, sandbox);
+  vm.runInNewContext(siteSource + "\n" + featureSource + "\n" + productionSource + "\n" + runtimeSource, sandbox);
   return { sandbox, writes, providers, events, remoteDoc, requests };
 }
 
@@ -323,4 +324,19 @@ test('layout keeps unselected nodes fixed and avoids variable-sized obstacles',a
   const selected=f.nodes().filter(n=>['a','b'].includes(n.id));
   const obstacle=JSON.parse(fixed),ow=obstacle.data.width || 420,oh=obstacle.data.height || 380;
   assert.ok(selected.every(n=>n.position.x>=obstacle.position.x+ow+100 || n.position.y>=obstacle.position.y+oh+100),JSON.stringify({obstacle,selected}));assert.notEqual(selected[0].position.x,selected[1].position.x);
+});
+
+test('AI app creation, exact inputs, preflight and dry-run do not require modelCode',async()=>{
+ const f=fixture({allowWrites:true,apiData:{'/api/webapp/detail':{id:'app',name:'Test App',workflowId:'workflow',inputNodes:[{nodeId:'1',fieldName:'prompt',fieldType:'STRING',fieldValue:''},{nodeId:'2',fieldName:'duration',fieldType:'INT',fieldValue:'12',min:1,max:20}]}}});
+ await f.sandbox.testHooks.executeCommand({id:'app-create',type:'canvas.createApp',appId:'app',nodeId:'app-node',x:0,y:0});
+ assert.equal(f.events.find(e=>e.commandId==='app-create').ok,true);
+ await f.sandbox.testHooks.executeCommand({id:'app-config',type:'canvas.configureApp',nodeId:'app-node',inputs:[{nodeId:'1',fieldName:'prompt',value:'完整台词，不压缩。'}]});
+ assert.equal(f.events.find(e=>e.commandId==='app-config').ok,true);
+ await f.sandbox.testHooks.executeCommand({id:'app-pre',type:'canvas.preflight',nodeId:'app-node'});
+ const pre=f.events.find(e=>e.commandId==='app-pre');assert.equal(pre.ok,true);assert.equal(pre.result.ok,true);assert.match(pre.result.digest,/^[a-f0-9]{64}$/);
+ await f.sandbox.testHooks.executeCommand({id:'app-run-preview',type:'canvas.runNode',nodeId:'app-node',validateParams:true,dryRun:true,expectedDigest:pre.result.digest});
+ const result=f.events.find(e=>e.commandId==='app-run-preview');assert.equal(result.ok,true,result.error);assert.equal(result.result.submitted,false);assert.equal(result.result.request.canvas.nodes[0].data.aiApp.inputNodes[0].fieldValue,'完整台词，不压缩。');assert.equal(f.requests.some(r=>r.endsWith('/canvas/task/run')),false);
+ const before=JSON.stringify(f.remoteDoc.toJSON());
+ await f.sandbox.testHooks.executeCommand({id:'bad-config',type:'canvas.configureApp',nodeId:'app-node',inputs:[{nodeId:'1',fieldName:'prompt',value:'must not apply'},{nodeId:'2',fieldName:'duration',value:'100'}]});
+ assert.equal(f.events.find(e=>e.commandId==='bad-config').ok,false);assert.equal(JSON.stringify(f.remoteDoc.toJSON()),before);f.remoteDoc.destroy();
 });

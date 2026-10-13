@@ -1,9 +1,10 @@
 // Modified 2026-09-27: international site validation.
 (() => {
   if (!globalThis.RHCanvasSitePolicy?.parseCanvas(location.href)) return;
+  window.__RUNNINGHUB_CANVAS_BRIDGE_BROWSER_SOURCE__ = "browser-extension";
   const BRIDGE = "http://127.0.0.1:18765";
   const LOADER_KEY = "__RUNNINGHUB_CANVAS_BRIDGE_LOADER__";
-  const LOADER_VERSION = "0.6.0";
+  const LOADER_VERSION = "0.8.1";
   const PROTOCOL_VERSION = "1";
 
   if (window[LOADER_KEY]?.loading) return;

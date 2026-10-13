@@ -1,3 +1,9 @@
+import {Downloads} from './downloads.mjs';
+const downloads=new Downloads();await downloads.init();
+import { LayoutStore } from './layout-store.mjs';
+const layoutStore=new LayoutStore();
+import { BrowserBroker } from './browser-broker.mjs';
+const browserBroker=new BrowserBroker(join(process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge'),'browser-jobs'));
 import { diagnose } from './diagnostics.mjs';
 import { BridgeClient } from './bridge-client.mjs';
 import { CommandJournal } from './command-journal.mjs';
@@ -36,7 +42,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.6.0";
+const PRODUCT_VERSION = "0.8.1";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -61,12 +67,14 @@ const cleanHref = (href) => {
 };
 
 const runtimeInfo = async () => {
-  const [runtime, runtimeSource, sitePolicy, features] = await Promise.all([
+  const [runtime, runtimeSource, sitePolicy, features, layoutTemplate, productionFeatures] = await Promise.all([
     stat(RUNTIME_PATH), readFile(RUNTIME_PATH, "utf8"),
     readFile(new URL("../extension/site-policy.js", import.meta.url), "utf8"),
-    readFile(new URL("./canvas-features.js", import.meta.url), "utf8")
+    readFile(new URL("./canvas-features.js", import.meta.url), "utf8"),
+    readFile(new URL("./layout-template.js", import.meta.url), "utf8"),
+    readFile(new URL("./production-features.js", import.meta.url), "utf8")
   ]);
-  const source = `${sitePolicy}\n${features}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
+  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${productionFeatures}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
   return {
     mtimeMs: runtime.mtimeMs,
@@ -161,15 +169,34 @@ const server = http.createServer(async (req, res) => {
   try {
     if (![ `127.0.0.1:${PORT}`, `localhost:${PORT}` ].includes(req.headers.host)) return json(res, 403, { error: "INVALID_HOST" });
     const origin = req.headers.origin;
-    if (origin && !SITE_POLICY.origins.includes(origin)) return json(res, 403, { error: "ORIGIN_NOT_ALLOWED" });
+    const browserExtension = /^chrome-extension:\/\/[a-p]{32}$/.test(origin || '');
+    if (origin && !browserExtension && !SITE_POLICY.origins.includes(origin)) return json(res, 403, { error: "ORIGIN_NOT_ALLOWED" });
     if (origin) res.bridgeOrigin = origin;
     if (req.method === "OPTIONS") return json(res, 200, { ok: true });
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
 
+    if(browserExtension && !['/browser/poll','/browser/result'].includes(url.pathname))return json(res,403,{error:'EXTENSION_ROUTE_ONLY'});
+    if(url.pathname.startsWith('/browser/')){
+      if(origin && !browserExtension)return json(res,403,{error:'LOCAL_CLIENT_ONLY'});
+      if(url.pathname==='/browser/status' && req.method==='GET')return json(res,200,browserBroker.status());
+      if(url.pathname==='/browser/poll' && req.method==='GET'){
+        const until=Date.now()+18000;let job;
+        while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension')) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
+        return json(res,200,job || null);
+      }
+      if(url.pathname==='/browser/jobs' && req.method==='POST')return json(res,200,browserBroker.enqueue(JSON.parse(await readBody(req))));
+      if(url.pathname==='/browser/result' && req.method==='POST')return json(res,200,browserBroker.complete(JSON.parse(await readBody(req))));
+      if(url.pathname==='/browser/result' && req.method==='GET')return json(res,200,browserBroker.result(url.searchParams.get('id')));
+    }
     const pageRoutes = new Set(["/bridge-runtime.js", "/runtime-version", "/vendor/yjs.js", "/vendor/upload.js", "/commands", "/events", "/health"]);
     if (origin && ((!pageRoutes.has(url.pathname) && !/^\/media\/[0-9a-f-]{36}$/.test(url.pathname)) || (url.pathname === "/events" && req.method !== "POST"))) {
       return json(res, 403, { error: "LOCAL_CLIENT_ONLY" });
     }
+    if(url.pathname==='/downloads' && req.method==='POST')return json(res,200,await downloads.add(JSON.parse(await readBody(req))));
+    if(url.pathname==='/downloads' && req.method==='GET')return json(res,200,downloads.status(url.searchParams.get('id')));
+    if(url.pathname==='/downloads/retry' && req.method==='POST')return json(res,200,await downloads.retry(JSON.parse(await readBody(req)).id));
+    if(url.pathname==='/layout-preferences' && req.method==='GET')return json(res,200,await layoutStore.get(url.searchParams.get('canvasUrl')));
+    if(url.pathname==='/layout-preferences' && req.method==='POST')return json(res,200,await layoutStore.set(JSON.parse(await readBody(req))));
     if (req.method === "POST" && url.pathname === "/media") {
       const input = JSON.parse(await readBody(req));
       const canvas = SITE_POLICY.parseCanvas(input.canvasUrl);
@@ -208,10 +235,11 @@ const server = http.createServer(async (req, res) => {
       const input = JSON.parse(await readBody(req));
       const canvas = SITE_POLICY.parseCanvas(input.canvasUrl);
       if (!canvas || typeof input.allowWrites !== 'boolean') return json(res,400,{error:'INVALID_CANVAS_SCOPE'});
-      if (![...clients.values()].some(c => isCanvasClient(c) && SITE_POLICY.parseCanvas(c.href)?.key === canvas.key)) return json(res,409,{error:'CANVAS_NOT_CONNECTED'});
-      const id = input.sessionId || randomUUID();
-      if (input.sessionId && !sessions.has(id)) return json(res,409,{error:'SESSION_EXPIRED: select again without a session ID'});
-      const access = {...ACCESS, origin:canvas.origin, canvasId:canvas.canvasId, allowWrites:input.allowWrites};
+      if (![...clients.values()].some(c => isCanvasClient(c) && SITE_POLICY.parseCanvas(c.href)?.key === canvas.key && (!input.clientId || c.clientId===input.clientId))) return json(res,409,{error:'CANVAS_NOT_CONNECTED'});
+      const oldScope=input.sessionId?sessions.get(input.sessionId):null;
+      const id = oldScope && oldScope.origin===canvas.origin && oldScope.canvasId===canvas.canvasId && (oldScope.clientId || null)===(input.clientId || null)?input.sessionId:randomUUID();
+      if (input.sessionId && !oldScope) return json(res,409,{error:'SESSION_EXPIRED: select again without a session ID'});
+      const access = {...ACCESS, origin:canvas.origin, canvasId:canvas.canvasId, allowWrites:input.allowWrites,...(input.clientId?{clientId:input.clientId}:{})};
       sessions.set(id,access);
       return json(res,200,{ok:true,sessionId:id,access});
     }
@@ -245,6 +273,8 @@ const server = http.createServer(async (req, res) => {
       if (event.clientId) {
         clients.set(event.clientId, {
           clientId: event.clientId,
+          browserSource: ["browser-extension","codex-browser"].includes(event.browserSource)?event.browserSource:"unknown",
+          browserInstanceId: typeof event.browserInstanceId==="string"?event.browserInstanceId.slice(0,100):null,
           href: event.href,
           title: event.title,
           runtimeVersion: event.runtimeVersion,
@@ -264,7 +294,7 @@ const server = http.createServer(async (req, res) => {
         record.state = "completed";
         record.completedAt=Date.now();
         persistCommand(event.commandId);
-        if (canvasMutations.get(record.canvasKey) === event.commandId) canvasMutations.delete(record.canvasKey);
+        if (canvasMutations.get(record.mutationKey || record.canvasKey) === event.commandId) canvasMutations.delete(record.mutationKey || record.canvasKey);
       }
       return json(res, 200, { ok: true });
     }
@@ -335,6 +365,7 @@ const server = http.createServer(async (req, res) => {
       const { route, selected } = await selectClient(command.clientId);
       const scope = accessFor(command);
       if (!scope) return json(res,409,{errorCode:'SESSION_EXPIRED'});
+      if(scope.clientId && command.clientId!==scope.clientId)return json(res,403,{errorCode:'SESSION_CLIENT_MISMATCH'});
       if (command.sessionId && selected && (scope.canvasId !== canvasIdFromHref(selected.href) || scope.origin !== SITE_POLICY.parseCanvas(selected.href).origin)) return json(res,403,{errorCode:'SESSION_CANVAS_MISMATCH'});
       const denied = SITE_POLICY.authorizeCommand(command, scope, SITE_POLICY.parseCanvas(selected?.href));
       if (denied) return json(res, 403, { ok: false, errorCode: denied, generationEnabled: ACCESS.generationEnabled });
@@ -376,7 +407,7 @@ const server = http.createServer(async (req, res) => {
       }
       command.expiresAt = Date.now() + Math.min(Math.max(Number(command.queueTimeoutMs) || 30000, 1000), 60000);
       command.access = {...scope, generationEnabled:ACCESS.generationEnabled};
-      commandRecords.set(command.id, { fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || null, createdAt:Date.now(), canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
+      commandRecords.set(command.id, { fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || null, createdAt:Date.now(), mutationKey: SITE_POLICY.parseCanvas(selected.href).apiOrigin+"/"+SITE_POLICY.parseCanvas(selected.href).canvasId, canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
       persistCommand(command.id);
       const queue = pendingCommands.get(clientId) || [];
       queue.push(command);
@@ -418,12 +449,12 @@ const server = http.createServer(async (req, res) => {
         command.access={...currentScope,generationEnabled:ACCESS.generationEnabled};
         const mode = SITE_POLICY.commandMode(command);
         if (mode === 'edit' || mode === 'generate') {
-          if (canvasMutations.has(record.canvasKey)) {
+          if (canvasMutations.has(record.mutationKey || record.canvasKey)) {
             const queue = pendingCommands.get(clientId) || [];
             queue.push(command); pendingCommands.set(clientId,queue);
             return false;
           }
-          canvasMutations.set(record.canvasKey,command.id);
+          canvasMutations.set(record.mutationKey || record.canvasKey,command.id);
         }
         record.state = "dispatched";
         return true;

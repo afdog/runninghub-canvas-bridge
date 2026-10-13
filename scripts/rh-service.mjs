@@ -103,7 +103,7 @@ const serviceStatus = () => {
 
 const readyStatus = async () => {
   let status;
-  for (let attempt = 0; attempt < 12; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     status = serviceStatus();
     if (status.ok) return status;
     await new Promise(resolve => setTimeout(resolve, 250));

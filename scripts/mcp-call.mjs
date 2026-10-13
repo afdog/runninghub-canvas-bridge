@@ -16,11 +16,13 @@ try {
     const result = await client.listTools();
     console.log(JSON.stringify(result.tools.map(({name,description})=>({name,description})), null, 2));
   } else {
+    let scopeId;
     if (option("--canvas")) {
       const selected = await client.callTool({ name: "rh_select_canvas", arguments: { canvasUrl: option("--canvas"), allowWrites: args.includes("--write") } });
+      scopeId=selected.structuredContent?.scopeId;
       if (selected.isError) throw new Error(selected.content?.[0]?.text || "Canvas selection failed");
     }
-    const result = await client.callTool({ name: tool, arguments: JSON.parse(input) }, undefined, { timeout: 90000 });
+    const result = await client.callTool({ name: tool, arguments: {...JSON.parse(input),...(scopeId?{scopeId}:{})} }, undefined, { timeout: 90000 });
     console.log(JSON.stringify(result.structuredContent || result, null, 2));
     if (result.isError) process.exitCode = 1;
   }

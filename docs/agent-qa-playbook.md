@@ -27,7 +27,7 @@ The Agent may:
 
 Use this as the default workflow scenario unless the test owner specifies another one.
 
-- Local reference image: `/Users/wind/Downloads/luye.jpg`
+- Local reference image: `/absolute/path/to/reference.jpg`
 - Character: 鹿野 from 罗小黑战记
 - Story: the character performs a short Tai Chi sequence
 - Image model: GPT Image 2 / `text-image-rhart-image-g-2-official-text-to-image`
