@@ -131,7 +131,7 @@ watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?deta
 
 隧道恢复不保证客户端继续持有的旧 MCP 会话仍有效。若仍报 `Session terminated`，客户端需要重新连接或在新会话中重新调用；先核查未知写入回执，不重复提交生成。扩展更新后需重新加载扩展并刷新画布，MAIN 和 ISOLATED 两种页面心跳才会同时生效。
 
-内置浏览器要求扩展新建的标签页处于激活状态；0.8.2 自动满足该要求。复用已有页面仍按 focus 参数处理，Chrome/Edge 保留后台开页能力。
+内置浏览器要求扩展新建的标签页处于激活状态。`rh_open_canvas` 默认 `intent: "connect"`，优先静默复用已连接画布；旧 `focus: true` 不再激活已有标签页。只有用户要求展示时才设置 `intent: "show"`。必须新建内置页面时仍会前台打开，回执标明 `presentation.activation: "required-for-new-tab"`；Chrome/Edge 保留后台新建能力。任务 scope 固定操作目标，不代表宿主的前台标签页已经按对话隔离。
 
 后台服务不会自动继承终端或系统代理环境。若 OpenAI 连接依赖已有代理，需在该后台服务中明确配置同一 HTTP_PROXY / HTTPS_PROXY，并让 NO_PROXY 排除本机地址。不要把 local healthy/ready 当作云端接通证据；应从客户端实际调用 rh_status 验证。
 

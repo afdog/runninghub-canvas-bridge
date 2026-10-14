@@ -8,6 +8,20 @@ import { fileURLToPath } from 'node:url';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 
+test('MCP defaults old focus callers to connect and reserves show for explicit presentation',async t=>{
+ const calls=[];
+ const server=createMcpServer({open:async(...args)=>{calls.push(args);return {ok:true};},request:async()=>({})});
+ const client=new Client({name:'presentation-test',version:'1'});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);
+ t.after(async()=>{await client.close();await server.close();});
+ const args={canvasUrl:'https://rhtv.runninghub.ai/project/canvas/123',focus:true};
+ assert.equal((await client.callTool({name:'rh_open_canvas',arguments:args})).isError,undefined);
+ assert.equal(calls[0][4],'connect');
+ assert.equal((await client.callTool({name:'rh_open_canvas',arguments:{...args,intent:'show'}})).isError,undefined);
+ assert.equal(calls[1][4],'show');
+ assert.match(client.getInstructions(),/not browser foreground tabs/);
+});
+
 test('modern stdio discovery and overlapping calls work without initialize; invalid openings are rejected',async t=>{
  const source=`import {serveStdio} from '@modelcontextprotocol/server/stdio';import {createMcpServer} from ${JSON.stringify(new URL('../server/mcp.mjs',import.meta.url).href)};serveStdio(()=>createMcpServer({status:async()=>({ok:true,source:'fixture'})}));`;
  const child=spawn(process.execPath,['--input-type=module','-e',source],{cwd:fileURLToPath(new URL('..',import.meta.url)),stdio:['pipe','pipe','pipe']});

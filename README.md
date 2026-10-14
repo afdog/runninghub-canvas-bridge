@@ -77,7 +77,7 @@ npm start
 ```text
 rh_list_canvases               查询账号目录
         ↓
-rh_open_canvas                打开目标，取得独立 scopeId
+rh_open_canvas                静默复用目标连接，取得独立 scopeId
         ↓
 rh_get_layout_template        读取持久排版规范
         ↓

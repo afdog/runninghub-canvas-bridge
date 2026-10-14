@@ -7,13 +7,17 @@ const sites=globalThis.RHCanvasSitePolicy;
 export class BrowserBroker {
   constructor(root){this.jobs=new Map();this.providers=new Map();this.lastSeen=0;this.root=root;if(root){mkdirSync(root,{recursive:true});for(const name of readdirSync(root).filter(n=>n.endsWith('.json'))){const j=JSON.parse(readFileSync(join(root,name),'utf8'));if(j.state==='running'){j.state='unknown';j.result={ok:false,error:'BROWSER_WRITE_OUTCOME_UNKNOWN: inspect account before any replacement request'};}this.jobs.set(j.id,j);}}}
   persist(j){if(!this.root||j.args.action!=='manageCanvas')return;const p=join(this.root,j.id+'.json');writeFileSync(p+'.tmp',JSON.stringify(j),{mode:0o600});renameSync(p+'.tmp',p);}
-  status(){return {providers:[...this.providers].filter(([,t])=>Date.now()-t<45000).map(([source])=>source),connected:Date.now()-this.lastSeen<45000,pending:[...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length};}
+  status(){return {presentationPolicy:'connect-by-default-v1',providers:[...this.providers].filter(([,t])=>Date.now()-t<45000).map(([source])=>source),connected:Date.now()-this.lastSeen<45000,pending:[...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length};}
   enqueue(input){
     if(!['listCanvases','openCanvas','manageCanvas'].includes(input.action))throw new Error('BROWSER_ACTION_INVALID');
     const args={action:input.action};if(input.browserSource){if(!['browser-extension','codex-browser'].includes(input.browserSource))throw new Error('INVALID_BROWSER_SOURCE');args.browserSource=input.browserSource;}
     if(input.action==='openCanvas'){
       const site=sites.parseCanvas(input.canvasUrl);if(!site)throw new Error('INVALID_CANVAS_URL');
-      args.canvasUrl=site.origin+new URL(input.canvasUrl).pathname;args.focus=input.focus===true;
+      args.canvasUrl=site.origin+new URL(input.canvasUrl).pathname;
+      args.intent=input.intent ?? 'connect';if(!['connect','show'].includes(args.intent))throw new Error('INVALID_PRESENTATION_INTENT');
+      // Normalize even requests from already-running older MCP clients. The
+      // extension understands focus, but callers must explicitly request show.
+      args.focus=args.intent==='show';
     }else{
       args.origin=input.origin || 'https://rhtv.runninghub.ai';
       if(!sites.origins.includes(args.origin))throw new Error('INVALID_SITE');
@@ -33,14 +37,14 @@ export class BrowserBroker {
     for(const [id,j] of this.jobs){if(j.args.action!=='manageCanvas'&&Date.now()-j.created>300000)this.jobs.delete(id);}
     const job=[...this.jobs.values()].find(j=>j.state==='queued' && (!j.args.browserSource || j.args.browserSource===browserSource));
     if(!job)return null;
-    job.state='running';job.lease=randomUUID();this.persist(job);return {id:job.id,lease:job.lease,...job.args};
+    job.state='running';job.provider=browserSource;job.lease=randomUUID();this.persist(job);return {id:job.id,lease:job.lease,...job.args};
   }
   complete({id,lease,result}){
     const j=this.jobs.get(id);if(!j || j.lease!==lease || j.state!=='running')throw new Error('BROWSER_RECEIPT_MISMATCH');
     // Only pass the narrowly shaped browser result. Never store browser auth or arbitrary payloads.
     if(result?.ok===false)j.result={ok:false,error:String(result.error || 'BROWSER_FAILED').replace(/Bearer\s+\S+/gi,'[REDACTED]').slice(0,200)};
     else if(j.args.action==='manageCanvas')j.result={ok:true,result:result.data,dryRun:result.dryRun===true};
-    else if(j.args.action==='openCanvas')j.result={ok:true,canvasUrl:j.args.canvasUrl,reused:result?.reused===true};
+    else if(j.args.action==='openCanvas')j.result={ok:true,canvasUrl:j.args.canvasUrl,reused:result?.reused===true,presentation:{intent:j.args.intent,activation:j.args.focus?'requested':j.provider==='codex-browser' && result?.reused!==true?'required-for-new-tab':'unchanged',connection:result?.reused===true?'existing':'new'}};
     else{
       if(!Array.isArray(result?.canvases))throw new Error('BROWSER_RESULT_INVALID');
       j.result={ok:true,complete:result.complete===true,scope:j.args.scope,teamId:j.args.teamId,origin:j.args.origin,

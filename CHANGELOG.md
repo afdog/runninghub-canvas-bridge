@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Reuse a fresh exact canvas connection before sending any browser open job, preserving browser-provider and task-scope isolation.
+- Separate routine `intent: connect` from user-requested `intent: show`. Normalize legacy `focus: true` at the broker so already-running older clients cannot activate existing tabs during background work.
+- Report required foreground creation for new Codex tabs explicitly; existing-tab reuse does not claim cross-conversation ownership of the browser UI. No extension reload is needed for this server/MCP change.
+
 ## 0.8.2
 
 - Open new Codex built-in browser tabs as active, as required by the host; reusing an existing tab retains the normal focus preference.

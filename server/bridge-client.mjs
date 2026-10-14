@@ -33,8 +33,17 @@ export class BridgeClient {
     while(Date.now()<until){const job=await this.request('/browser/result?id='+encodeURIComponent(id));if(job.result){if(job.result.ok===false)throw new Error(job.result.error);return {...job.result,browserSource:args.browserSource};}await pause(300);}
     return {ok:false,state:'unknown',browserRequestId:id,nextAction:'Read /browser/result with this ID before opening again.'};
   }
-  async open(canvasUrl,allowWrites=false,focus=false,browserSource){
-    const opened=await this.browserJob({action:'openCanvas',canvasUrl,focus,browserSource});if(opened.ok===false)return opened;
+  async open(canvasUrl,allowWrites=false,focus=false,browserSource,intent='connect'){
+    const site=policy.parseCanvas(canvasUrl);if(!site)throw new Error('INVALID_CANVAS_URL');
+    if(!['connect','show'].includes(intent))throw new Error('INVALID_PRESENTATION_INTENT');
+    const [clients,health]=await Promise.all([this.request('/clients'),this.request('/browser/status')]);
+    const matches=clients.filter(c=>policy.parseCanvas(c.href)?.key===site.key && c.runtimeFreshness==='fresh');
+    const source=browserSource || (health.providers?.includes('codex-browser') || matches.some(c=>c.browserSource==='codex-browser')?'codex-browser':'browser-extension');
+    const connected=matches.find(c=>c.browserSource===source && c.clientId===this.pinnedClientId) || matches.find(c=>c.browserSource===source);
+    // Connecting a task is not a request to display its page. Legacy focus=true
+    // is deliberately ignored; only the explicit show intent may activate a tab.
+    if(connected && intent==='connect')return {ok:true,reused:true,browserSource:source,...await this.select(canvasUrl,allowWrites,connected.clientId),presentation:{intent,activation:'unchanged',connection:'existing',legacyFocusIgnored:focus===true}};
+    const opened=await this.browserJob({action:'openCanvas',canvasUrl,intent,browserSource:source});if(opened.ok===false)return opened;
     for(let i=0;i<60;i++){
       const clients=await this.request('/clients');
       const match=clients.find(c=>policy.parseCanvas(c.href)?.key===policy.parseCanvas(canvasUrl)?.key && c.runtimeFreshness==='fresh' && (!opened.browserSource || c.browserSource===opened.browserSource));
