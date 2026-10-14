@@ -2,7 +2,7 @@
 
 Source and releases: https://github.com/limyum-creator/runninghub-canvas-bridge
 
-The product has two parts: the local bridge/MCP package and the Chrome extension. Both must use the same product version. Node.js 20.19+, ffmpeg/ffprobe and a logged-in Chrome profile are required. Lumen is optional and only needed for its archive tools.
+The product has two parts: the local bridge/MCP package and the Chrome extension. Both must use the same product version. Node.js 22+, ffmpeg/ffprobe and a logged-in Chrome profile are required. Lumen is optional and only needed for its archive tools.
 
 ## Install from source
 
@@ -21,7 +21,7 @@ Load `extension/` as an unpacked Chrome extension. Register `server/mcp.mjs` wit
 Download the `.tgz` from the matching GitHub Release:
 
 ```sh
-npm install -g ./runninghub-canvas-bridge-0.4.0.tgz
+npm install -g ./runninghub-canvas-bridge-0.9.1.tgz
 runninghub-canvas-bridge setup
 ```
 
@@ -31,12 +31,14 @@ Load the `extension.unpackedPath` returned by setup in Chrome, or extract the ma
 
 1. Keep package, extension, loader, server and MCP versions aligned.
 2. Run `npm ci`, `npm run check`, `npm test` and `npm run build`.
-3. Run `npm run release:package` and `npm pack --pack-destination dist`.
+3. Run `npm run release:package`, `npm pack --pack-destination dist`, then `npm run release:manifest`.
 4. Inspect the staged source and package inventory. Exclude private configuration, canvas payloads, media, credentials and `local-private/`.
 5. Push the reviewed source to this repository. Push a matching `v*` tag to run the release workflow, or attach the verified artifacts to a release manually. Use one publication path per version.
 
 Release assets:
 
+- `update.json` (stable-channel update metadata)
+- `runninghub-canvas-bridge-<version>.tgz.sha256`
 - `runninghub-canvas-bridge-<version>.tgz`
 - `runninghub-canvas-bridge-extension-v<version>.zip`
 - `runninghub-canvas-bridge-extension-v<version>.sha256`
@@ -44,3 +46,5 @@ Release assets:
 The tag workflow installs dependencies and ffmpeg, runs tests, builds the browser dependencies and packages the artifacts. It publishes a GitHub Release; it does not publish to npm.
 
 Bridge protocol version is `1`. Refresh canvas tabs after updating the extension and bridge. Keep the private archive directory across updates so pending imports can resume with their original identities.
+
+Automatic updates are opt-in. See [automatic updates](AUTO_UPDATE.md) for configuration retention, service management and rollback. Never overwrite a published archive in place; fix it in a newer version.

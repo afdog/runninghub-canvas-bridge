@@ -5,9 +5,9 @@ import { randomUUID } from 'node:crypto';
 import '../extension/site-policy.js';
 const sites=globalThis.RHCanvasSitePolicy;
 export class BrowserBroker {
-  constructor(root){this.jobs=new Map();this.providers=new Map();this.lastSeen=0;this.root=root;if(root){mkdirSync(root,{recursive:true});for(const name of readdirSync(root).filter(n=>n.endsWith('.json'))){const j=JSON.parse(readFileSync(join(root,name),'utf8'));if(j.state==='running'){j.state='unknown';j.result={ok:false,error:'BROWSER_WRITE_OUTCOME_UNKNOWN: inspect account before any replacement request'};}this.jobs.set(j.id,j);}}}
+  constructor(root){this.jobs=new Map();this.providers=new Map();this.extensionVersions=new Map();this.lastSeen=0;this.root=root;if(root){mkdirSync(root,{recursive:true});for(const name of readdirSync(root).filter(n=>n.endsWith('.json'))){const j=JSON.parse(readFileSync(join(root,name),'utf8'));if(j.state==='running'){j.state='unknown';j.result={ok:false,error:'BROWSER_WRITE_OUTCOME_UNKNOWN: inspect account before any replacement request'};}this.jobs.set(j.id,j);}}}
   persist(j){if(!this.root||j.args.action!=='manageCanvas')return;const p=join(this.root,j.id+'.json');writeFileSync(p+'.tmp',JSON.stringify(j),{mode:0o600});renameSync(p+'.tmp',p);}
-  status(){return {presentationPolicy:'connect-by-default-v1',providers:[...this.providers].filter(([,t])=>Date.now()-t<45000).map(([source])=>source),connected:Date.now()-this.lastSeen<45000,pending:[...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length};}
+  status(){return {extensionVersions:[...this.extensionVersions].filter(([,v])=>Date.now()-v.lastSeen<45000).map(([browserSource,v])=>({browserSource,version:v.version})),presentationPolicy:'connect-by-default-v1',providers:[...this.providers].filter(([,t])=>Date.now()-t<45000).map(([source])=>source),connected:Date.now()-this.lastSeen<45000,pending:[...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length};}
   enqueue(input){
     if(!['listCanvases','openCanvas','manageCanvas'].includes(input.action))throw new Error('BROWSER_ACTION_INVALID');
     const args={action:input.action};if(input.browserSource){if(!['browser-extension','codex-browser'].includes(input.browserSource))throw new Error('INVALID_BROWSER_SOURCE');args.browserSource=input.browserSource;}
@@ -31,7 +31,8 @@ export class BrowserBroker {
     if([...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length>=100)throw new Error('BROWSER_QUEUE_FULL');
     const id=input.action==='manageCanvas'?createHash('sha256').update(args.origin+':'+input.requestId).digest('hex'):randomUUID();const prior=this.jobs.get(id);if(prior){if(JSON.stringify(prior.args)!==JSON.stringify(args))throw new Error('BROWSER_REQUEST_CONFLICT');return {id};}const job={id,args,created:Date.now(),state:'queued'};this.jobs.set(id,job);this.persist(job);return {id};
   }
-  poll(browserSource="browser-extension"){
+  poll(browserSource="browser-extension",extensionVersion=null){
+    if(/^\d+\.\d+\.\d+$/.test(extensionVersion||''))this.extensionVersions.set(browserSource,{version:extensionVersion,lastSeen:Date.now()});
     this.providers.set(browserSource,Date.now());
     this.lastSeen=Date.now();
     for(const [id,j] of this.jobs){if(j.args.action!=='manageCanvas'&&Date.now()-j.created>300000)this.jobs.delete(id);}

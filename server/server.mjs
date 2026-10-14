@@ -1,3 +1,4 @@
+import {UpdateMaintenance} from './update-maintenance.mjs';
 import {Downloads} from './downloads.mjs';
 const downloads=new Downloads();await downloads.init();
 import { LayoutStore } from './layout-store.mjs';
@@ -42,7 +43,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.8.2";
+const PRODUCT_VERSION = "0.9.1";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -56,6 +57,14 @@ const clients = new Map();
 const sessions = new Map();
 const canvasMutations = new Map();
 const accessFor = input => input.sessionId ? sessions.get(input.sessionId) : ACCESS;
+const updateMaintenance=new UpdateMaintenance({
+  busy:()=>({commands:[...commandRecords.values()].filter(r=>['queued','dispatched'].includes(r.state)).length,
+    mutations:canvasMutations.size,browserJobs:browserBroker.status().pending,
+    downloads:downloads.active.size,archiveWorker:archives.running?1:0}),
+  pause:()=>archives.stop(),resume:()=>archives.start()
+});
+const updateLeaseTimer=setInterval(()=>updateMaintenance.status(),1000);updateLeaseTimer.unref();
+
 
 const canvasIdFromHref = (href) => SITE_POLICY.parseCanvas(href)?.canvasId || null;
 const isCanvasClient = (client) => Boolean(SITE_POLICY.parseCanvas(client?.href)) && Date.now() - Number(client.lastSeenAt || 0) < CLIENT_TTL;
@@ -175,14 +184,34 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") return json(res, 200, { ok: true });
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
 
-    if(browserExtension && !['/browser/poll','/browser/result'].includes(url.pathname))return json(res,403,{error:'EXTENSION_ROUTE_ONLY'});
+    if(browserExtension && !['/browser/poll','/browser/result','/browser/update'].includes(url.pathname))return json(res,403,{error:'EXTENSION_ROUTE_ONLY'});
+    if(url.pathname==='/update/maintenance'){
+      if(origin)return json(res,403,{error:'LOCAL_CLIENT_ONLY'});
+      if(req.method==='GET')return json(res,200,updateMaintenance.status());
+      if(req.method==='POST'){
+        const body=JSON.parse(await readBody(req));
+        const result=body.action==='release'?updateMaintenance.release(body.lease):updateMaintenance.acquire(body.lease);
+        return json(res,result.ok?200:409,result);
+      }
+    }
+    const passive=['/health','/events','/commands','/browser/poll','/browser/result','/browser/update','/bridge-runtime.js','/runtime-version'];
+    if(!passive.includes(url.pathname) && !url.pathname.startsWith('/vendor/')){
+      if(updateMaintenance.status().maintenance)return json(res,503,{errorCode:'UPDATE_IN_PROGRESS',error:'Bridge is updating. Reconnect after the update; do not replay writes.'});
+      updateMaintenance.requests++;let counted=true;
+      const done=()=>{if(counted){counted=false;updateMaintenance.requests--;}};
+      res.once('finish',done);res.once('close',done);
+    }
+    if(url.pathname==='/browser/update' && req.method==='GET'){
+      const state=updateMaintenance.status();
+      return json(res,200,{version:PRODUCT_VERSION,reloadAllowed:state.idle&&!state.maintenance});
+    }
     if(url.pathname.startsWith('/browser/')){
       if(origin && !browserExtension)return json(res,403,{error:'LOCAL_CLIENT_ONLY'});
       if(url.pathname==='/browser/status' && req.method==='GET')return json(res,200,browserBroker.status());
       if(url.pathname==='/browser/poll' && req.method==='GET'){
         const requestedWait=Number(url.searchParams.get('waitMs') ?? 18000);
         const until=Date.now()+(Number.isFinite(requestedWait)?Math.max(0,Math.min(18000,requestedWait)):18000);let job;
-        while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension')) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
+        while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension',url.searchParams.get('extensionVersion'))) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
         return json(res,200,job || null);
       }
       if(url.pathname==='/browser/jobs' && req.method==='POST')return json(res,200,browserBroker.enqueue(JSON.parse(await readBody(req))));
@@ -488,7 +517,8 @@ const server = http.createServer(async (req, res) => {
         instanceId: process.env.RH_BRIDGE_INSTANCE_ID || null,
         pendingClients: pendingCommands.size,
         activeMutations: canvasMutations.size,
-        sessions: sessions.size
+        sessions: sessions.size,
+        update: updateMaintenance.status()
       });
     }
 

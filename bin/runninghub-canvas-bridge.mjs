@@ -64,6 +64,7 @@ Usage:
   runninghub-canvas-bridge status
   runninghub-canvas-bridge report [--write]
   runninghub-canvas-bridge extension
+  runninghub-canvas-bridge update enable|disable|status|check|apply
   runninghub-canvas-bridge <bridge-command> [...args]
 
 Common bridge commands:
@@ -217,6 +218,7 @@ else if (command === "doctor" || command === "diagnose") await doctor();
 else if (command === "status") status();
 else if (command === "report") report();
 else if (command === "extension") extensionInfo();
+else if (command === "update") { const result=runNode(resolve(repoRoot,"scripts/rh-update.mjs"),args,{stdio:"inherit"}); process.exitCode=result.status??1; }
 else {
   const passthrough = runNode(bridgeScript, [command, ...args], { stdio: "inherit" });
   process.exit(passthrough.status ?? (passthrough.ok ? 0 : 1));

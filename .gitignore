@@ -13,3 +13,6 @@ server/vendor/
 
 # Owner-only setup notes and private validation evidence; never publish.
 local-private/
+
+# Release-only dependency lock, generated from package-lock.json by prepack.
+npm-shrinkwrap.json

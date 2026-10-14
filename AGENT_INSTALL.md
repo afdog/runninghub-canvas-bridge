@@ -4,7 +4,7 @@
 
 ## 1. 准备本机服务
 
-需要 Node.js 20.19+、ffmpeg/ffprobe，以及已登录 RunningHub 的浏览器。桥接、MCP 与浏览器应运行在同一台电脑。默认本机地址为 `http://127.0.0.1:18765`。
+需要 Node.js 22+、ffmpeg/ffprobe，以及已登录 RunningHub 的浏览器。桥接、MCP 与浏览器应运行在同一台电脑。默认本机地址为 `http://127.0.0.1:18765`。
 
 ```sh
 git clone https://github.com/limyum-creator/runninghub-canvas-bridge.git
@@ -79,7 +79,7 @@ npm run service:restart
 
 支持 `service:start`、`service:stop`、`service:uninstall`。macOS 使用 LaunchAgent；Windows 使用当前用户的登录启动目录，无需管理员权限。卸载保留本地归档与配置；不要在运行期间移动项目目录。改变服务保存的环境变量后，重新安装服务定义。
 
-Windows 需在 PATH 中提供 `ffprobe.exe`，或在安装服务前设置 `RH_FFPROBE` 为完整路径。企业策略禁用 Windows Script Host 时，使用前台 `npm start`。本版 Windows 登录浏览器现场验证尚未完成。
+Windows 需在 PATH 中提供 `ffprobe.exe`，或在安装服务前设置 `RH_FFPROBE` 为完整路径。企业策略禁用 Windows Script Host 时，使用前台 `npm start`。当前源码已在 Windows Chrome 完成账号目录、准确画布连接与读取、公网 OAuth 和授权续期验证，75 项自动测试全部通过；付费生成与整机重启后的浏览器恢复不在此次验收范围内。
 
 ## ChatGPT 个人插件
 
@@ -91,6 +91,12 @@ Windows 需在 PATH 中提供 `ffprobe.exe`，或在安装服务前设置 `RH_FF
 4. 安装插件后调用 `rh_status`，验证本机桥接与浏览器来源；按自己的使用需求配置插件操作权限。
 
 Tunnel 配置与界面以 [官方文档](https://github.com/openai/tunnel-client#readme) 为准。隧道、本机桥接和已登录浏览器需要在线；本项目无需额外 RunningHub API key。
+
+## Gemini 与其他远程 MCP 客户端
+
+Gemini 等网页版客户端可使用独立的 HTTPS MCP 网关，复用现有工具和浏览器连接。它使用 OAuth 授权，并与本地 stdio、ChatGPT 专用隧道并行；不能把本地 18765 端口直接填到远程客户端。配置和验证步骤见 [远程 MCP 接入](docs/REMOTE_MCP.md)。
+
+Gemini 自定义 MCP 目前需要英文界面：可用 `https://gemini.google.com/app?hl=en` 进入，再从 `@` 菜单选择真正的连接器。提示词和回复可以继续用中文，已完成目录查询、准确开页和画布摘要的真实验收。中文界面可能已显示关联和工具清单，但对话不加载这些工具；不能把保存成功当作实际调用成功。
 
 ## 升级与故障定位
 
@@ -140,3 +146,7 @@ watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?deta
 多个客户端共用官方 `tunnel-client` 0.0.16 的 stdio 进程时，如果出现 `MCP server is not initialized`，可在同一后台服务环境设置 `MCP_STDIO_SEND_INITIALIZED_NOTIFICATION=true`。这是官方客户端的兼容开关：在成功的 initialize 响应后、释放共享请求通道之前发送 initialized 通知，避免其他调用进入初始化空隙；后续重复通知会被客户端去重。它不重放工具调用，也不改变 RunningHub 的功能权限。此配置和轮询参数需要重启隧道进程生效，浏览器扩展无需因此重载。升级官方客户端后按其当前帮助再次核对。
 
 0.8.2 的服务端采用官方 SDK v2 `serveStdio` 入口，支持 MCP `2026-07-28` 的 `server/discover` 和自包含请求。支持新版协议的云端客户端可跳过反复 initialize/initialized；旧本地客户端仍可按原握手连接。更新源码后先安装依赖，再重启隧道进程，并用实际调用确认协商结果。无论使用哪个协议，每个画布任务都必须继续携带自己的 `scopeId`。协议说明见 [MCP TypeScript SDK](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions)。
+
+## 自动更新（Windows / macOS）
+
+使用 Node.js 22+，从正式 Release 解压到固定目录的安装可运行 `node scripts/rh-update.mjs enable`；`status` 查看结果，`disable` 关闭。无需重建桥接或 OAuth 配置。更新只针对正式 Release，不覆盖 Git 工作区。首次从旧扩展升级需要重载一次，以后自动检测已登记文件的更新。完整的服务支持范围、独立扩展目录、授权保留与回退说明见 [自动更新](docs/AUTO_UPDATE.md)。

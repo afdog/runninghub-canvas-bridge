@@ -1,6 +1,6 @@
 {
   "name": "runninghub-canvas-bridge",
-  "version": "0.8.2",
+  "version": "0.9.1",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Structured tools for RunningHub infinite canvas on international and China sites.",
@@ -29,11 +29,12 @@
     "CONTRIBUTING.md",
     "LICENSE",
     "UPSTREAM.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "start": "node server/server.mjs",
-    "check": "node --check server/server.mjs && node --check server/bridge-runtime.js && node --check extension/bridge-main.js && node --check scripts/rh-bridge.mjs && node --check scripts/rh-service.mjs && node --check bin/runninghub-canvas-bridge.mjs && node --check scripts/package-release.mjs && node --check extension/site-policy.js && node --check server/mcp.mjs && node --check server/archive.mjs && node --check server/media.mjs && node --check server/lumen.mjs && node --check server/bridge-client.mjs && node --check server/canvas-features.js && node --check scripts/windows-service.mjs && node --check scripts/service-runner.mjs && node --check scripts/zip.mjs && node --check server/command-journal.mjs && node --check server/diagnostics.mjs && node --check extension/background.js && node --check server/browser-broker.mjs && node --check server/layout-store.mjs && node --check server/layout-template.js && node --check server/task-scopes.mjs && node --check server/production-features.js && node --check server/mcp-production.mjs && node --check server/downloads.mjs && node --check server/snapshots.mjs && node --check extension/browser-pump.js && node --check extension/keepalive.js && node --check scripts/tunnel-watchdog.mjs",
+    "check": "node --check server/server.mjs && node --check server/bridge-runtime.js && node --check extension/bridge-main.js && node --check scripts/rh-bridge.mjs && node --check scripts/rh-service.mjs && node --check bin/runninghub-canvas-bridge.mjs && node --check scripts/package-release.mjs && node --check extension/site-policy.js && node --check server/mcp.mjs && node --check server/archive.mjs && node --check server/media.mjs && node --check server/lumen.mjs && node --check server/bridge-client.mjs && node --check server/canvas-features.js && node --check scripts/windows-service.mjs && node --check scripts/service-runner.mjs && node --check scripts/zip.mjs && node --check server/command-journal.mjs && node --check server/diagnostics.mjs && node --check extension/background.js && node --check server/browser-broker.mjs && node --check server/layout-store.mjs && node --check server/layout-template.js && node --check server/task-scopes.mjs && node --check server/production-features.js && node --check server/mcp-production.mjs && node --check server/downloads.mjs && node --check server/snapshots.mjs && node --check extension/browser-pump.js && node --check extension/keepalive.js && node --check scripts/tunnel-watchdog.mjs && node --check server/remote-auth.mjs && node --check server/mcp-http.mjs && node --check scripts/rh-remote.mjs && node --check scripts/rh-update.mjs && node --check scripts/update-host.mjs && node --check scripts/update-archive.mjs && node --check server/update-maintenance.mjs",
     "bridge": "node scripts/rh-bridge.mjs",
     "cli": "node bin/runninghub-canvas-bridge.mjs",
     "release:check": "npm run check && npm pack --dry-run",
@@ -45,16 +46,23 @@
     "service:uninstall": "node scripts/rh-service.mjs uninstall",
     "build": "node scripts/build-vendor.mjs",
     "test": "node --test tests/*.test.mjs",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node scripts/package-update.mjs lock",
     "mcp": "node server/mcp.mjs",
-    "service:stop": "node scripts/rh-service.mjs stop"
+    "service:stop": "node scripts/rh-service.mjs stop",
+    "mcp:http": "node server/mcp-http.mjs",
+    "remote": "node scripts/rh-remote.mjs",
+    "update": "node scripts/rh-update.mjs",
+    "release:manifest": "node scripts/package-update.mjs manifest"
   },
   "private": true,
   "dependencies": {
     "@aws-sdk/client-s3": "3.1141.0",
     "@aws-sdk/lib-storage": "3.1141.0",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/sdk": "1.30.1",
     "@modelcontextprotocol/server": "2.3.1",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
     "lib0": "0.2.114",
     "y-protocols": "1.0.6",
     "y-websocket": "3.0.0",
@@ -63,5 +71,8 @@
   },
   "devDependencies": {
     "esbuild": "0.25.12"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

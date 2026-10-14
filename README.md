@@ -8,7 +8,7 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.8.2-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![Version](https://img.shields.io/badge/version-0.9.1-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
 [![MCP](https://img.shields.io/badge/MCP-73_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
@@ -72,6 +72,12 @@ npm start
 
 将 `server/mcp.mjs` 配置为客户端的 stdio MCP 入口，即可开始。**完整配置、Windows 命令、后台服务与 ChatGPT 插件接入见 [安装说明](AGENT_INSTALL.md)。** 默认启动不启用生成；需要生成时按安装说明设置 `RH_BRIDGE_ALLOW_GENERATION=1`。
 
+## 自动更新
+
+正式安装包可开启自动更新：`node scripts/rh-update.mjs enable`。Windows / macOS 每六小时检查正式 Release，空闲时更新桥接、MCP、页面运行时和已登记扩展；保留配置与 OAuth 授权，失败回退程序。源码开发目录不会被覆盖。
+
+首次装入本版后需重新加载一次旧扩展，后续已登记扩展可自行检测更新并重载。客户端可能需要刷新工具列表；普通更新不需要重新授权账号。详见 [自动更新与恢复](docs/AUTO_UPDATE.md)。
+
 ## 一次典型调用
 
 ```text
@@ -96,8 +102,9 @@ rh_canvas_summary / get_node  检查已有内容
 | --- | --- |
 | 工具 | 73 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 本地 60 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
-| Windows | 提供每用户后台服务与路径适配；本版 Windows 登录浏览器现场联测尚未完成 |
+| 自动测试 | 本地 84 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
+| Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
+| 远程 HTTP 接口 | 公网 OAuth 和 73 工具发现通过；Gemini 英文界面、Grok Bot 均已实测状态、布局模板、目录、画布连接与摘要，支持中文指令 |
 | 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
 | 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |
 | 中国站 | 保留地址与协议适配；本版现场验收以国际站为主 |
@@ -110,7 +117,9 @@ rh_canvas_summary / get_node  检查已有内容
 | --- | --- |
 | [安装说明](AGENT_INSTALL.md) | 浏览器扩展、本机 MCP、后台服务、ChatGPT 插件、升级 |
 | [Agent 快速上手](AGENT_QUICKSTART.md) | 任务连接、应用参数、媒体、下载、冲突与恢复 |
+| [远程 MCP 接入](docs/REMOTE_MCP.md) | Gemini、Grok Bot 等远程客户端的 HTTPS 网关、OAuth 与域名配置 |
 | [73 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
+| [自动更新](docs/AUTO_UPDATE.md) | 开启、暂停、保留授权、空闲切换与失败恢复 |
 | [更新记录](CHANGELOG.md) | 版本变化与兼容性调整 |
 | [贡献指南](CONTRIBUTING.md) | 开发和反馈 |
 

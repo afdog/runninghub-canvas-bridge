@@ -102,7 +102,7 @@ async function listAccountCanvases({origin,scope,teamId}){
   }catch{return {ok:false,error:'CANVAS_LIST_FAILED: check browser login and network'};}
 }
 const transport=createRHBrowserPump({
- poll:async()=>{const r=await fetch(BASE+'/browser/poll?waitMs=0&browserSource='+encodeURIComponent(BROWSER_SOURCE),{signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('POLL_FAILED');return r.json();},
+ poll:async()=>{const r=await fetch(BASE+'/browser/poll?waitMs=0&browserSource='+encodeURIComponent(BROWSER_SOURCE)+'&extensionVersion='+encodeURIComponent(chrome.runtime.getManifest().version),{signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('POLL_FAILED');return r.json();},
  execute:handle,
  complete:async(job,result)=>{const r=await fetch(BASE+'/browser/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:job.id,lease:job.lease,result}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('RECEIPT_FAILED');},
  schedule:(fn,ms)=>setTimeout(fn,ms),cancel:clearTimeout
@@ -116,3 +116,21 @@ chrome.alarms.onAlarm.addListener(pump);
 chrome.runtime.onStartup.addListener(pump);
 chrome.runtime.onInstalled.addListener(pump);
 pump();
+
+// Installed files are replaced only by the opt-in, checksum-verified updater.
+// Read the disk manifest as well as the bridge version to avoid reload loops
+// for extensions extracted elsewhere or a bridge already running a newer build.
+let checkingUpdate=false;
+async function checkInstalledUpdate(){
+ if(checkingUpdate)return;checkingUpdate=true;
+ try{
+  await transport.wake();
+  const response=await fetch(BASE+'/browser/update',{signal:AbortSignal.timeout(4000)});
+  if(!response.ok)return;const state=await response.json();
+  if(!state.reloadAllowed)return;
+  const disk=await (await fetch(chrome.runtime.getURL('manifest.json'),{cache:'no-store'})).json();
+  if(disk.version===state.version && disk.version!==chrome.runtime.getManifest().version){transport.stop();chrome.runtime.reload();}
+ }catch{}finally{checkingUpdate=false;}
+}
+chrome.alarms.create('bridge-installed-update',{periodInMinutes:1});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==='bridge-installed-update')checkInstalledUpdate();});

@@ -40,6 +40,13 @@ test("local HTTP bridge restricts origins, commands, and stale/incorrect client 
   assert.equal((await health.json()).access.generationEnabled, false);
   assert.equal((await post("/command", { type: "canvas.summary" }, { Origin: origin })).status, 403);
   assert.equal((await fetch(base + "/events", { headers: { Origin: origin } })).status, 403);
+  const lease='00000000-0000-4000-8000-000000000000';
+  assert.equal((await post('/update/maintenance',{lease},{Origin:origin})).status,403);
+  assert.equal((await post('/update/maintenance',{lease})).status,200);
+  assert.equal((await post('/command',{type:'canvas.summary'})).status,503);
+  assert.equal((await (await fetch(base+'/health')).json()).update.maintenance,true);
+  await post('/update/maintenance',{lease,action:'release'});
+  assert.equal((await (await fetch(base+'/health')).json()).update.maintenance,false);
   const runtime = await (await fetch(base + "/runtime-version")).json();
   const href = origin + "/project/canvas/fixture";
   assert.equal((await post("/events", { kind: "bridge.installed", clientId: "fixture-client", href, runtimeVersion: runtime.version }, { Origin: origin })).status, 200);

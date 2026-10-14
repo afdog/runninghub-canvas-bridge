@@ -39,7 +39,10 @@ jobs:
         run: npm run release:package
 
       - name: Package npm tarball
-        run: npm pack
+        run: npm pack --pack-destination dist
+
+      - name: Write verified update manifest
+        run: npm run release:manifest
 
       - name: Write release notes
         run: |
@@ -56,7 +59,7 @@ jobs:
           Install:
           - GitHub asset: npm install -g ./runninghub-canvas-bridge-${VERSION}.tgz
           - Source: https://github.com/${GITHUB_REPOSITORY}
-          - Requires Node.js 20.19+, ffmpeg/ffprobe and a logged-in supported browser.
+          - Requires Node.js 22+, ffmpeg/ffprobe and a logged-in supported browser.
 
           Browser extension:
           1. Download and unzip runninghub-canvas-bridge-extension-v${VERSION}.zip.
@@ -77,4 +80,5 @@ jobs:
             --notes-file release-notes.md \
             dist/*.zip \
             dist/*.sha256 \
-            runninghub-canvas-bridge-*.tgz
+            dist/*.tgz \
+            dist/update.json

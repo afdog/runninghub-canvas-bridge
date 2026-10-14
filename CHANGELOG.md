@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.9.1
+
+- Optional OAuth/PKCE Streamable HTTP gateway for Gemini and Grok Bot, retaining the 73-tool surface and local stdio entrypoint.
+- Opt-in Windows/macOS automatic updates from verified stable release archives, with locked dependencies and no lifecycle hooks during staging.
+- Idle maintenance leases, exclusive updater lock, durable crash recovery and code-only rollback; preserve configuration, OAuth grants and disabled service state.
+- Managed browser extension update detection and reload; register separate Codex extension directories without changing browser identity.
+- Publish `update.json` and archive SHA-256 for each release; source checkouts and locally modified installations are protected.
+
+
+- Verify Grok Bot OAuth linking and 73-tool discovery against a Windows-hosted public gateway, including real status, layout, catalog, exact-canvas connection and read-only summary calls. Document the account-wide remote connector setup.
+- Add an optional loopback Streamable HTTP gateway for remote MCP clients, with OAuth discovery, dynamic registration, owner consent, S256 PKCE and rotating refresh tokens. Reuse the full tool factory while preserving task scopes. Public OAuth/tool calls and Gemini account linking with 73-tool discovery are verified. Gemini's English interface passed real status, layout-template, catalog, exact-canvas open and summary calls, including Chinese-language prompts.
+- Support native browser consent forms without relaxing Origin or CSRF checks. Finish authorization on a same-origin page before navigating to the registered client callback, keeping `form-action 'self'` throughout.
 
 - Reuse a fresh exact canvas connection before sending any browser open job, preserving browser-provider and task-scope isolation.
 - Separate routine `intent: connect` from user-requested `intent: show`. Normalize legacy `focus: true` at the broker so already-running older clients cannot activate existing tabs during background work.
