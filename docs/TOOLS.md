@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-0.8.2 共 **73** 个工具。以下描述由当前 MCP 工具清单生成；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
+0.10.2 共 **82** 个工具。以下描述由当前 MCP 工具清单生成；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
 
 所有画布工具携带任务自己的 `scopeId`。连接、账号目录和独立下载状态等工具不需要画布 scope。参见 [调用流程](../AGENT_QUICKSTART.md)。
 
@@ -69,6 +69,8 @@
 | 工具 | 用途 |
 | --- | --- |
 | `rh_run_node` | Submit the already-configured node once; may spend credits. Follow the caller's project identity rules before submission; when Lumen archiving is enabled, use a registered target Work. dryRun only returns the outgoing graph. Never retry an uncertain submission with a new requestId. |
+| `rh_node_history` | 读取当前节点自己的原生历史；翻页携带返回的 historyId 与 knownRevision，不切换当前结果。 |
+| `rh_sync_node_history` | 校验 canvas、node、task 和输出后仅修复 historyStorage；保留视频、参数、参考、连线和采用状态。不生成、不借用其他节点索引。 |
 | `rh_node_result` | Read current generation status, task ID and output URLs once without submitting or waiting for generation to finish. |
 | `rh_upload_image` | Upload a local PNG/JPEG/WebP image (up to 30 MiB) through the logged-in canvas, creating a reusable reference node. No generation. The path must exist on this computer. |
 | `rh_upload_media` | Upload a verified local image, video or audio through native canvas storage. PNG/JPEG/WebP up to 30 MiB, MP4/MOV/WebM up to 500 MiB, MP3/WAV/M4A/AAC/FLAC/OGG up to 50 MiB. Streams from this computer; no generation. |
@@ -101,3 +103,17 @@
 | `rh_list_snapshots` | List local snapshots for this exact canvas. |
 | `rh_diff_snapshot` | Compare a saved snapshot to the current canvas; returns currentDigest required for restoring without overwriting intervening work. |
 | `rh_restore_snapshot` | Restore an exact saved snapshot only if the whole canvas still matches currentDigest from rh_diff_snapshot. Saves a pre-restore backup. This can remove edits after the snapshot; never use to undo unrelated work. |
+
+## Media routes and history selection
+
+| Tool | Purpose |
+|---|---|
+| `rh_clone_nodes` | Copy explicit nodes/internal edges with new task/history identities and separate provenance. |
+| `rh_apply_node_history` | Select an exact native historical output; optionally restore recorded parameters. |
+| `rh_delete_node_history` | Delete one explicitly approved past output with revision protection; refuses the current result. |
+| `rh_media_capabilities` | Compare free browser/local operations and consent-gated canvas processing. |
+| `rh_plan_media_operation` | Freeze source, processing node, options and route rationale; return an owner approval link if charges are paid or unknown. |
+| `rh_execute_media_operation` | Execute one unchanged plan; paid/unknown paths cannot self-authorize. |
+| `rh_media_operation_status` | Recover original job/receipt or a verified local output, without resubmission. |
+
+Local FFmpeg and browser pixel operations use no RunningHub generation credits. Native FFMPEG jobs and AI model processing are conservatively marked unknown-cost until a reliable exact quote is integrated. The caller must compare free routes instead of defaulting to the canvas. See [agent workflow](../AGENT_QUICKSTART.md#media-processing-and-spending-consent-010).

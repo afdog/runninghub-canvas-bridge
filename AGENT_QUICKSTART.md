@@ -96,3 +96,24 @@ node scripts/mcp-call.mjs rh_canvas_summary --input-file /absolute/path/to/scope
 ```
 
 最后一个文件保存工具参数（包括 scopeId）。Windows PowerShell 可优先使用 `--input-file` 避免复杂 JSON 引号。私有参数文件放在源码目录之外。
+
+## 节点历史缺失
+
+`rh_generation_history` 是账号任务目录，`rh_node_history` 是节点原生历史，两者不能互相替代。节点按钮缺失时，先读取该节点的原生历史，再用 `rh_sync_node_history` 的 `dryRun` 检查差异；确认只变化 `data.historyStorage` 后执行并回读。该操作逐条核对真实 task、node 和输出，不改变当前结果或输入，也不生成媒体。原生按钮通常要求至少两个结果；只有一个真实结果时不能虚增数量。
+
+`rh_run_node` 会携带节点自己的原生索引。成功提交的回执会登记持久同步任务，任务结束后补齐索引；浏览器离线时等待重新连接，不自动打开或切换标签页。状态可在本机 `/history-sync` 查看。同步失败只能重试查询/索引校准，不能重提生成。代码测试通过与网页按钮实际恢复须分别记录。
+
+## Media processing and spending consent (0.10)
+
+Call `rh_media_capabilities`, compare the canvas, bridge host and the agent's own local capabilities for convenience, transfer cost, fidelity and quality, then record the reason in `rh_plan_media_operation`. A local bridge can be on another computer. Do not assume it is the agent's filesystem.
+
+- `canvas-browser`: free frame capture and basic image crop/resize/rotate/flip, PNG result uploaded as a new node; 16 MP limit and source CORS required.
+- `local`: free FFmpeg frame capture, trim, crop, speed, reverse, rotate/flip, audio extraction and image resize. The result is a verified local path; use `rh_upload_media` to add it without replacing the source. Set `RH_FFMPEG`/`RH_FFPROBE` if needed on Windows or macOS.
+- `canvas-media`: native video transforms/trim. Charges are currently unknown, so owner consent is mandatory. Prepare a separate empty video node.
+- `canvas-model`: prepare a separate live-schema model/app node, bind sources and masks, and configure exact parameters for repaint/erase/expand/cutout/upscale/repair/separation. Model availability is account-dependent. For project generation, register the Work and bind the archive destination before planning.
+
+Return `approvalUrl` to the human for any paid/unknown plan. It requires the existing local connection key (or private `media-operations/owner-key.txt` for local-only installs). Never click/submit this consent yourself without the user's explicit approval of this exact operation. There is no MCP approval tool. A connector grant, an available quota, or `userApproved:true` is not spending consent. Input/parameter changes invalidate a plan. `rh_execute_media_operation` submits once; `rh_media_operation_status` distinguishes complete local processing, native submitted jobs, and unknown outcomes. Inspect the original receipt after timeout; never create a replacement plan automatically.
+
+`rh_apply_node_history` changes only the selected result by default; `restoreParams=true` restores recorded parameters/model settings while preserving links, geometry and user adoption. Native history selection is not creative acceptance. `rh_delete_node_history` is irreversible and requires explicit user deletion consent; the current output is protected. Copies have new native history identity; provenance is recorded separately.
+
+For AI application history, restore uses the recorded `nodeInfoList` mapped to the same app ID and exact input fields. The default `appBindingPolicy=preserve` refuses conflicting bound inputs. Only explicitly choose `detach_changed` when restoring historical literal inputs is intended; it detaches changed field bindings while leaving shared source nodes and canvas edges untouched. Never claim a `params` patch restored app inputs.

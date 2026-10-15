@@ -82,13 +82,13 @@ test('browser consent preserves same-origin POST and rejects unregistered callba
  assert.equal((await f.request('/health')).headers.get('referrer-policy'),'no-referrer');
 });
 
-test('authenticated remote MCP serves all 73 tools, legacy handshake and modern concurrent calls',async t=>{
+test('authenticated remote MCP serves all 82 tools, legacy handshake and modern concurrent calls',async t=>{
  const f=await setup(t),registered=await f.register({token_endpoint_auth_method:'client_secret_post'});
  const flow=await f.consent(registered),response=await f.exchange(registered,flow),tokens=await response.json();assert.equal(response.status,200);
  const headers={Authorization:`Bearer ${tokens.access_token}`};
  const transport=new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers}});
  const client=new Client({name:'legacy-remote-test',version:'1'});t.after(()=>client.close());
- await client.connect(transport);assert.equal((await client.listTools()).tools.length,73);
+ await client.connect(transport);assert.equal((await client.listTools()).tools.length,82);
  const called=await client.callTool({name:'rh_status',arguments:{}});assert.equal(called.structuredContent.fixture,true);
  const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientCapabilities':{},'io.modelcontextprotocol/clientInfo':{name:'modern-remote-test',version:'1'}};
  const calls=await Promise.all(Array.from({length:3},(_,id)=>f.request('/mcp',{method:'POST',headers:{...headers,'MCP-Protocol-Version':'2026-07-28','Mcp-Method':'tools/call','Mcp-Name':'rh_status','Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:id+1,method:'tools/call',params:{name:'rh_status',arguments:{},_meta:meta}})})));
@@ -122,6 +122,6 @@ test('the real MCP factory retains required task scopes behind the HTTP adapter'
  const f=await setup(t,{realFactory:true}),registered=await f.register(),flow=await f.consent(registered),tokens=await (await f.exchange(registered,flow)).json();
  const client=new Client({name:'real-factory-test',version:'1'});t.after(()=>client.close());
  await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers:{Authorization:`Bearer ${tokens.access_token}`}}}));
- const {tools}=await client.listTools();assert.equal(tools.length,73);assert.ok(tools.find(t=>t.name==='rh_get_node').inputSchema.required.includes('scopeId'));
+ const {tools}=await client.listTools();assert.equal(tools.length,82);assert.ok(tools.find(t=>t.name==='rh_get_node').inputSchema.required.includes('scopeId'));
  const rejected=await client.callTool({name:'rh_get_node',arguments:{nodeId:'example'}});assert.equal(rejected.isError,true);
 });

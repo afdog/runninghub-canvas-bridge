@@ -242,7 +242,7 @@
           if(!schemas.has(template.id)) schemas.set(template.id,await fieldsFor(template));
           const fields=schemas.get(template.id);
           if((template.data.output || []).length || template.data.params?.prompt || template.data.text || template.data.content || (template.data.sourceObjects || []).length || fields.filter(mediaKind).some(f=>[template.data.params?.[f.name]].flat().some(Boolean)) || before.edges.some(e=>e.target===template.id) || /running|queued|processing/i.test(template.data.status || '')) throw new Error(`TEMPLATE_NOT_EMPTY: ${template.id}`);
-          let node=JSON.parse(JSON.stringify(template));
+          let node=globalThis.RHProductionFeatures.cloneGraph({nodes:[template],edges:[]},{prefix:shot.nodeId,keepOutputs:false}).nodes[0];
           Object.assign(node,{id:shot.nodeId,position:{x:0,y:0},selected:false});
           for(const key of ['parentNode','parentId','extent','positionAbsolute','dragging','measured']) delete node[key];
           for(const key of ['output','taskId','jobId','progress','error','errorMsg','queuePosition']) delete node.data[key];

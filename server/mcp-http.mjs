@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {MediaConsent} from './media-consent.mjs';
 import express from 'express';
 import {rateLimit} from 'express-rate-limit';
 import {createMcpHandler} from '@modelcontextprotocol/server';
@@ -42,12 +43,15 @@ export function createRemoteApp({publicUrl,ownerSecretHash,statePath,factory=cre
  // gateway shares conservative login limits, so spoofed headers cannot bypass it.
  const rateOptions={validate:{xForwardedForHeader:false}};
  app.post('/approve',rateLimit({...rateOptions,windowMs:15*60000,limit:20,standardHeaders:true,legacyHeaders:false}),express.urlencoded({extended:false,limit:'16kb'}),(req,res)=>auth.approve(req,res));
+ const mediaConsent=new MediaConsent({origin:publicUrl,secretHash:ownerSecretHash});
+ app.get('/media-approval/:id',async(req,res)=>{try{const page=await mediaConsent.page(req.params.id);res.set('Referrer-Policy','same-origin');res.cookie('rh_media_consent',page.csrf,{httpOnly:true,secure:true,sameSite:'strict',path:'/media-approval',maxAge:600000});res.type('html').send(page.html);}catch{res.status(404).send('处理计划不存在、已过期或已执行。');}});
+ app.post('/media-approval/:id',rateLimit({...rateOptions,windowMs:15*60000,limit:20,standardHeaders:true,legacyHeaders:false}),express.urlencoded({extended:false,limit:'16kb'}),async(req,res)=>{try{const cookie=(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('rh_media_consent='))?.slice(17);await mediaConsent.approve(req.params.id,req.body,cookie,req.headers.origin);res.type('text').send('已授权这一次处理。请回到原对话继续。');}catch{res.status(403).send('授权失败，请确认连接密钥、计划有效期与确认选项。');}});
  app.use(mcpAuthRouter({provider:auth,issuerUrl:new URL(publicUrl),resourceServerUrl:new URL('/mcp',publicUrl),scopesSupported:[REMOTE_SCOPE],resourceName:'RunningHub Canvas',clientRegistrationOptions:{clientSecretExpirySeconds:0,rateLimit:rateOptions},authorizationOptions:{rateLimit:rateOptions},tokenOptions:{rateLimit:rateOptions},revocationOptions:{rateLimit:rateOptions}}));
  app.get('/.well-known/oauth-protected-resource',(req,res)=>res.json({resource:auth.resource,authorization_servers:[publicUrl],scopes_supported:[REMOTE_SCOPE],resource_name:'RunningHub Canvas'}));
  app.get('/health',(req,res)=>res.json({ok:true,version:PRODUCT_VERSION,service:'runninghub-remote-mcp',authentication:'oauth2-pkce',transport:'streamable-http'}));
  app.get('/',(req,res)=>res.type('text').send('RunningHub Canvas MCP. Connect your client to /mcp.'));
  // createMcpServer takes a BridgeClient, not the SDK's per-request context.
- const handle=toNodeHandler(createMcpHandler(()=>factory()));
+ const handle=toNodeHandler(createMcpHandler(()=>factory(undefined,{approvalOrigin:publicUrl})));
  const bearer=requireBearerAuth({verifier:auth,requiredScopes:[REMOTE_SCOPE],resourceMetadataUrl:new URL('/.well-known/oauth-protected-resource/mcp',publicUrl).href});
  app.all('/mcp',bearer,express.json({limit:'2mb'}),(req,res,next)=>Promise.resolve(handle(req,res,req.body)).catch(next));
  app.use((req,res)=>res.status(404).json({error:'not_found'}));

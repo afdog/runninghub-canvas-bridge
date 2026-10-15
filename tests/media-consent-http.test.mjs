@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createServer} from 'node:net';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {randomUUID} from 'node:crypto';
+import {hash,saveJson} from '../server/media-consent.mjs';
+test('local approval HTTP accepts exact owner form and never adds an agent approval endpoint',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'rh-consent-http-'));t.after(()=>rm(root,{recursive:true,force:true}));const media=join(root,'media');await mkdir(media);
+ const config=join(root,'remote.json');await writeFile(config,JSON.stringify({ownerSecretHash:hash('test-owner')}));const id=randomUUID();
+ await saveJson(join(media,id+'.json'),{id,digest:'immutable',expiresAt:Date.now()+60000,state:'awaiting_consent',cost:{kind:'unknown'},operation:'image_repaint'});
+ const reservation=createServer();await new Promise(r=>reservation.listen(0,'127.0.0.1',r));const port=reservation.address().port;await new Promise(r=>reservation.close(r));
+ const child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,RH_BRIDGE_PORT:String(port),RH_ARCHIVE_DIR:root,RH_DOWNLOAD_DIR:join(root,'download'),RH_HISTORY_SYNC_DIR:join(root,'history'),RH_MEDIA_OPERATIONS_DIR:media,RH_REMOTE_CONFIG:config},stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}});await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw Error('Bridge failed');})]);
+ const base='http://127.0.0.1:'+port,start=await fetch(base+'/media-approval/'+id);assert.equal(start.status,200);const page=await start.text(),csrf=page.match(/name="csrf" value="([^"]+)"/)[1],cookie=start.headers.get('set-cookie').split(';')[0];
+ assert.equal((await fetch(base+'/media-approval/'+id,{method:'POST',headers:{Origin:'https://evil.test','Content-Type':'application/x-www-form-urlencoded',Cookie:cookie},body:new URLSearchParams({csrf,ownerSecret:'test-owner',consent:'yes'})})).status,403);
+ const approved=await fetch(base+'/media-approval/'+id,{method:'POST',headers:{Origin:base,'Content-Type':'application/x-www-form-urlencoded',Cookie:cookie},body:new URLSearchParams({csrf,ownerSecret:'test-owner',consent:'yes'})});assert.equal(approved.status,200);assert.equal(JSON.parse(await readFile(join(media,id+'.approval.json'),'utf8')).digest,'immutable');
+ assert.equal((await fetch(base+'/media-operations/approve',{method:'POST',headers:{Origin:base},body:'{}'})).status,403);
+});

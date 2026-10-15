@@ -8,8 +8,8 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.9.1-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
-[![MCP](https://img.shields.io/badge/MCP-73_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
+[![Version](https://img.shields.io/badge/version-0.10.2-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![MCP](https://img.shields.io/badge/MCP-82_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
 
@@ -48,9 +48,15 @@
 
 按节点或准确的历史任务下载结果，查看进度、校验文件、重试失败任务；服务器支持且存在校验标识时可续传。光栈（Lumen）自动归档为可选集成。
 
+### 媒体处理与费用授权
+
+截帧、图片裁剪/缩放/旋转可在浏览器内免费处理；视频剪裁、倍速、倒放与音频提取也可使用桥接电脑的 FFmpeg。Agent 会比较画布与本地能力的便利性和效果再选择路径，原素材保留。
+
+涉及积分或费用未确认的原生视频处理、AI 重绘/扩图/超分/修复，先生成具体计划，经用户授权后执行一次。授权绑定输入和参数，超时不会自动重复提交。付费原生路径已经接入授权流程，但尚未进行真实扣费验收；详细用法见 [Agent 指南](AGENT_QUICKSTART.md#media-processing-and-spending-consent-010)。
+
 ## 快速开始
 
-**准备：** Node.js 20.19+、ffmpeg/ffprobe，以及一个已登录 RunningHub 的受支持浏览器。
+**准备：** Node.js 22+、ffmpeg/ffprobe，以及一个已登录 RunningHub 的受支持浏览器。
 
 ```sh
 git clone https://github.com/limyum-creator/runninghub-canvas-bridge.git
@@ -100,11 +106,13 @@ rh_canvas_summary / get_node  检查已有内容
 
 | 项目 | 当前情况 |
 | --- | --- |
-| 工具 | 73 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
+| 节点历史 | 原生历史读取、按真实任务修复索引；生成完成后自动同步，断线与重启后续接 |
+| 工具 | 82 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 本地 84 项通过；2 项 Windows 专用检查在 macOS 跳过。跨平台结果以 Actions 为准 |
+| 自动测试 | 本地 108 项通过；2 项 Windows 专用检查在 macOS 跳过；Windows 相关测试 51 项通过。完整跨平台结果以 Actions 为准 |
+| 免费媒体处理 | 已实测浏览器截帧、图片裁剪、保存回读，以及本地 FFmpeg 处理；付费路径已验证未授权时拒绝提交 |
 | Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
-| 远程 HTTP 接口 | 公网 OAuth 和 73 工具发现通过；Gemini 英文界面、Grok Bot 均已实测状态、布局模板、目录、画布连接与摘要，支持中文指令 |
+| 远程 HTTP 接口 | 公网 OAuth 已验证（0.9.1 的 73 工具）；Gemini 英文界面、Grok Bot 均已实测状态、布局模板、目录、画布连接与摘要，支持中文指令 |
 | 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
 | 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |
 | 中国站 | 保留地址与协议适配；本版现场验收以国际站为主 |
@@ -118,7 +126,7 @@ rh_canvas_summary / get_node  检查已有内容
 | [安装说明](AGENT_INSTALL.md) | 浏览器扩展、本机 MCP、后台服务、ChatGPT 插件、升级 |
 | [Agent 快速上手](AGENT_QUICKSTART.md) | 任务连接、应用参数、媒体、下载、冲突与恢复 |
 | [远程 MCP 接入](docs/REMOTE_MCP.md) | Gemini、Grok Bot 等远程客户端的 HTTPS 网关、OAuth 与域名配置 |
-| [73 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
+| [82 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
 | [自动更新](docs/AUTO_UPDATE.md) | 开启、暂停、保留授权、空闲切换与失败恢复 |
 | [更新记录](CHANGELOG.md) | 版本变化与兼容性调整 |
 | [贡献指南](CONTRIBUTING.md) | 开发和反馈 |

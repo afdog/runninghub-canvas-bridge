@@ -17,7 +17,7 @@ test("local HTTP bridge restricts origins, commands, and stale/incorrect client 
   t.after(()=>rm(archiveRoot,{recursive:true,force:true}));
   const child = spawn(process.execPath, ["server/server.mjs"], {
     cwd: new URL("..", import.meta.url),
-    env: { ...process.env, RH_ARCHIVE_DIR:archiveRoot, RH_BRIDGE_PORT: String(port), RH_BRIDGE_ALLOW_WRITES: "0", RH_BRIDGE_ALLOW_GENERATION: "0", RH_BRIDGE_ACCESS_FILE: "" },
+    env: { ...process.env, RH_ARCHIVE_DIR:archiveRoot,RH_MEDIA_OPERATIONS_DIR:join(archiveRoot,'media'), RH_BRIDGE_PORT: String(port), RH_BRIDGE_ALLOW_WRITES: "0", RH_BRIDGE_ALLOW_GENERATION: "0", RH_BRIDGE_ACCESS_FILE: "" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(async () => { if (child.exitCode === null) { child.kill(); await once(child, "exit"); } });
@@ -123,7 +123,7 @@ test('HTTP command receipts and duplicate IDs survive service restart without re
   const root=await mkdtemp(join(tmpdir(),'rh-restart-'));let child;
   const stop=async()=>{if(child && child.exitCode===null){const exit=once(child,'exit');child.kill();await exit;}};
   t.after(async()=>{await stop();await rm(root,{recursive:true,force:true});});
-  const start=async()=>{child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,RH_ARCHIVE_DIR:root,RH_BRIDGE_PORT:String(port),RH_BRIDGE_ALLOW_WRITES:'0',RH_BRIDGE_ALLOW_GENERATION:'0',RH_BRIDGE_ACCESS_FILE:''},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Bridge failed to start');})]);};
+  const start=async()=>{child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,RH_ARCHIVE_DIR:root,RH_MEDIA_OPERATIONS_DIR:join(root,'media'),RH_BRIDGE_PORT:String(port),RH_BRIDGE_ALLOW_WRITES:'0',RH_BRIDGE_ALLOW_GENERATION:'0',RH_BRIDGE_ACCESS_FILE:''},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Bridge failed to start');})]);};
   await start();const base=`http://127.0.0.1:${port}`,href='https://www.runninghub.ai/project/canvas/restart';
   const post=async(path,value)=>(await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)})).json();
   const get=async path=>(await fetch(base+path)).json();

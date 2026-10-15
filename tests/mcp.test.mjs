@@ -36,7 +36,7 @@ test('modern stdio discovery and overlapping calls work without initialize; inva
  const malformed=await request('tools/call',{name:'rh_status',arguments:{}},{...meta,'io.modelcontextprotocol/clientCapabilities':null});assert.equal(malformed.error?.code,-32602);
  const discover=await request('server/discover');assert.equal(discover.result.resultType,'complete');assert.ok(discover.result.supportedVersions.includes('2026-07-28'));
  const responses=await Promise.all([request('tools/list'),...Array.from({length:4},()=>request('tools/call',{name:'rh_status',arguments:{}}))]);
- assert.equal(responses[0].result.tools.length,73);
+ assert.equal(responses[0].result.tools.length,82);
  for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');}
  const invalid=await request('tools/call',{name:'rh_move_nodes',arguments:{positions:[{nodeId:'A',x:'bad',y:0}]}});assert.equal(invalid.result.isError,true);
 });
@@ -51,7 +51,7 @@ test('MCP handshake, typed tools, prompts and request IDs survive transport', as
   t.after(async()=>{await client.close();await server.close();});
   assert.match(client.getInstructions(),/Lumen/);
   const {tools}=await client.listTools();
-  assert.equal(tools.length,73);
+  assert.equal(tools.length,82);
   assert.equal(tools.some(t=>/eval|api_post/.test(t.name)),false);
   assert.equal(tools.find(t=>t.name==='rh_run_node').annotations.readOnlyHint,false);
   const prompt='角色甲……请完整保留这句测试文本，包括停顿，只要——';
@@ -71,7 +71,7 @@ test('real stdio process initializes and lists tools without bridge availability
   const transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('../server/mcp.mjs',import.meta.url))],stderr:'pipe'});
   t.after(()=>client.close());
   await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length,73);
+  assert.equal((await client.listTools()).tools.length,82);
 });
 
 test('MCP requires exact canvas selection and loopback bridge',async()=>{

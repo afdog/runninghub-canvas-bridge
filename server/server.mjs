@@ -1,3 +1,6 @@
+import {MediaOperations} from './media-operations.mjs';
+import {MediaConsent,mediaRoot} from './media-consent.mjs';
+import {HistorySync} from './history-sync.mjs';
 import {UpdateMaintenance} from './update-maintenance.mjs';
 import {Downloads} from './downloads.mjs';
 const downloads=new Downloads();await downloads.init();
@@ -43,7 +46,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.9.1";
+const PRODUCT_VERSION = "0.10.2";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -53,15 +56,23 @@ const commandRecords = new Map();
 const journal=new CommandJournal(process.env.RH_COMMAND_DIR || join(process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge','archives'),'commands'));
 for(const entry of journal.load()) {commandRecords.set(entry.id,entry.record);if(entry.result) commandResults.set(entry.id,entry.result);}
 const persistCommand=id=>journal.save(id,commandRecords.get(id),commandResults.get(id));
+const historySync=new HistorySync({root:process.env.RH_HISTORY_SYNC_DIR || join(homedir(),'.runninghub-canvas-bridge','history-sync'),bridgeFactory:()=>new BridgeClient('http://127.0.0.1:'+PORT)});
+await historySync.init();
+// Recover only receipts from the version that records the intended canvas URL.
+for(const [id,record] of commandRecords)if(record.canvasUrl)await historySync.accept(record,commandResults.get(id));
+historySync.start();
 const clients = new Map();
 const sessions = new Map();
 const canvasMutations = new Map();
 const accessFor = input => input.sessionId ? sessions.get(input.sessionId) : ACCESS;
+const mediaOperations=new MediaOperations({downloads,bridgeFactory:context=>{const b=new BridgeClient('http://127.0.0.1:'+PORT);b.canvasUrl=context.canvasUrl;b.sessionId=context.sessionId;b.pinnedClientId=context.clientId;return b;}});
+await mediaOperations.init();
+const mediaConsent=new MediaConsent({origin:'http://127.0.0.1:'+PORT});
 const updateMaintenance=new UpdateMaintenance({
   busy:()=>({commands:[...commandRecords.values()].filter(r=>['queued','dispatched'].includes(r.state)).length,
     mutations:canvasMutations.size,browserJobs:browserBroker.status().pending,
-    downloads:downloads.active.size,archiveWorker:archives.running?1:0}),
-  pause:()=>archives.stop(),resume:()=>archives.start()
+    mediaOperations:mediaOperations.active.size,downloads:downloads.active.size,archiveWorker:archives.running?1:0,historyWorker:historySync.running?1:0}),
+  pause:()=>{archives.stop();historySync.stop();},resume:()=>{archives.start();historySync.start();}
 });
 const updateLeaseTimer=setInterval(()=>updateMaintenance.status(),1000);updateLeaseTimer.unref();
 
@@ -76,14 +87,15 @@ const cleanHref = (href) => {
 };
 
 const runtimeInfo = async () => {
-  const [runtime, runtimeSource, sitePolicy, features, layoutTemplate, productionFeatures] = await Promise.all([
+  const [runtime, runtimeSource, sitePolicy, features, layoutTemplate, productionFeatures, historyMediaPreview] = await Promise.all([
     stat(RUNTIME_PATH), readFile(RUNTIME_PATH, "utf8"),
     readFile(new URL("../extension/site-policy.js", import.meta.url), "utf8"),
     readFile(new URL("./canvas-features.js", import.meta.url), "utf8"),
     readFile(new URL("./layout-template.js", import.meta.url), "utf8"),
-    readFile(new URL("./production-features.js", import.meta.url), "utf8")
+    readFile(new URL("./production-features.js", import.meta.url), "utf8"),
+    readFile(new URL("./history-media-preview.js", import.meta.url), "utf8")
   ]);
-  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${productionFeatures}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
+  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${productionFeatures}\n${historyMediaPreview}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
   return {
     mtimeMs: runtime.mtimeMs,
@@ -179,7 +191,7 @@ const server = http.createServer(async (req, res) => {
     if (![ `127.0.0.1:${PORT}`, `localhost:${PORT}` ].includes(req.headers.host)) return json(res, 403, { error: "INVALID_HOST" });
     const origin = req.headers.origin;
     const browserExtension = /^chrome-extension:\/\/[a-p]{32}$/.test(origin || '');
-    if (origin && !browserExtension && !SITE_POLICY.origins.includes(origin)) return json(res, 403, { error: "ORIGIN_NOT_ALLOWED" });
+    if (origin && !browserExtension && !SITE_POLICY.origins.includes(origin) && !(origin==='http://127.0.0.1:'+PORT && /^\/media-approval\/[0-9a-f-]{36}$/.test(req.url))) return json(res, 403, { error: "ORIGIN_NOT_ALLOWED" });
     if (origin) res.bridgeOrigin = origin;
     if (req.method === "OPTIONS") return json(res, 200, { ok: true });
     const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -218,9 +230,24 @@ const server = http.createServer(async (req, res) => {
       if(url.pathname==='/browser/result' && req.method==='POST')return json(res,200,browserBroker.complete(JSON.parse(await readBody(req))));
       if(url.pathname==='/browser/result' && req.method==='GET')return json(res,200,browserBroker.result(url.searchParams.get('id')));
     }
+    if(/^\/media-approval\/[0-9a-f-]{36}$/.test(url.pathname)){
+      const id=url.pathname.split('/').at(-1);
+      res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+      if(req.method==='GET'){const page=await mediaConsent.page(id);res.setHeader('Set-Cookie','rh_media_consent='+page.csrf+'; HttpOnly; SameSite=Strict; Path=/media-approval; Max-Age=600');res.setHeader('Content-Type','text/html; charset=utf-8');res.end(page.html);return;}
+      if(req.method==='POST'){const body=Object.fromEntries(new URLSearchParams(await readBody(req)));const cookie=(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('rh_media_consent='))?.slice(17);await mediaConsent.approve(id,body,cookie,req.headers.origin);res.setHeader('Content-Type','text/plain; charset=utf-8');res.end('已授权这一次处理。请回到原对话继续。');return;}
+    }
     const pageRoutes = new Set(["/bridge-runtime.js", "/runtime-version", "/vendor/yjs.js", "/vendor/upload.js", "/commands", "/events", "/health"]);
     if (origin && ((!pageRoutes.has(url.pathname) && !/^\/media\/[0-9a-f-]{36}$/.test(url.pathname)) || (url.pathname === "/events" && req.method !== "POST"))) {
       return json(res, 403, { error: "LOCAL_CLIENT_ONLY" });
+    }
+    if(url.pathname==='/media-operations/capabilities'&&req.method==='GET')return json(res,200,await mediaOperations.capabilities());
+    if(url.pathname.startsWith('/media-operations/')&&req.method==='POST'){
+      const input=JSON.parse(await readBody(req)),scope=accessFor(input),canvas=SITE_POLICY.parseCanvas(input.canvasUrl);
+      if(!scope||!canvas||scope.canvasId!==canvas.canvasId||scope.origin!==canvas.origin||(scope.clientId&&scope.clientId!==input.clientId))return json(res,403,{error:'CANVAS_NOT_ALLOWED'});
+      const context={canvasUrl:input.canvasUrl,sessionId:input.sessionId,clientId:input.clientId};
+      if(url.pathname==='/media-operations/plan')return json(res,200,await mediaOperations.plan(input,context));
+      if(url.pathname==='/media-operations/status')return json(res,200,await mediaOperations.refreshStatus(input.planId,context));
+      if(url.pathname==='/media-operations/execute'){if(!scope.allowWrites)return json(res,403,{error:'READ_ONLY'});try{return json(res,200,await mediaOperations.execute(input.planId,context));}catch(error){if(error.message==='USER_CONSENT_REQUIRED')return json(res,403,{errorCode:'USER_CONSENT_REQUIRED'});throw error;}}
     }
     if(url.pathname==='/downloads' && req.method==='POST')return json(res,200,await downloads.add(JSON.parse(await readBody(req))));
     if(url.pathname==='/downloads' && req.method==='GET')return json(res,200,downloads.status(url.searchParams.get('id')));
@@ -234,6 +261,7 @@ const server = http.createServer(async (req, res) => {
       if (!canvas || !scope?.allowWrites || canvas.canvasId !== scope.canvasId || canvas.origin !== scope.origin) return json(res, 403, { error: "CANVAS_NOT_ALLOWED" });
       return json(res, 200, await mediaTickets.create(input.filePath, canvas.origin));
     }
+    if(url.pathname==='/history-sync' && req.method==='GET')return json(res,200,{jobs:historySync.status()});
     if (url.pathname === '/archives/binding' && req.method === 'GET') return json(res,200,archives.binding(url.searchParams.get('canvasUrl'),url.searchParams.get('nodeId')));
     if (url.pathname === '/archives/binding' && req.method === 'POST') return json(res,200,await archives.bind(JSON.parse(await readBody(req))));
     if (url.pathname === '/archives' && req.method === 'GET') return json(res,200,{ok:true,archives:archives.status(url.searchParams.get('id'))});
@@ -324,6 +352,7 @@ const server = http.createServer(async (req, res) => {
         record.state = "completed";
         record.completedAt=Date.now();
         persistCommand(event.commandId);
+        try{await historySync.accept(record,event);}catch{console.error('History sync queue unavailable; generation receipt retained for recovery.');}
         if (canvasMutations.get(record.mutationKey || record.canvasKey) === event.commandId) canvasMutations.delete(record.mutationKey || record.canvasKey);
       }
       return json(res, 200, { ok: true });
@@ -435,9 +464,10 @@ const server = http.createServer(async (req, res) => {
         if (previous.fingerprint !== fingerprint) return json(res, 409, { errorCode: "REQUEST_ID_CONFLICT" });
         return json(res, 200, { ok: true, id: command.id, clientId: previous.clientId, route, duplicate: true, state: previous.state });
       }
+      mediaOperations.authorizeCommand(command,cleanHref(selected.href));
       command.expiresAt = Date.now() + Math.min(Math.max(Number(command.queueTimeoutMs) || 30000, 1000), 60000);
       command.access = {...scope, generationEnabled:ACCESS.generationEnabled};
-      commandRecords.set(command.id, { fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || null, createdAt:Date.now(), mutationKey: SITE_POLICY.parseCanvas(selected.href).apiOrigin+"/"+SITE_POLICY.parseCanvas(selected.href).canvasId, canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
+      commandRecords.set(command.id, { fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || command.targetId || null, canvasUrl:cleanHref(selected.href), createdAt:Date.now(), mutationKey: SITE_POLICY.parseCanvas(selected.href).apiOrigin+"/"+SITE_POLICY.parseCanvas(selected.href).canvasId, canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
       persistCommand(command.id);
       const queue = pendingCommands.get(clientId) || [];
       queue.push(command);

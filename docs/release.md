@@ -21,7 +21,7 @@ Load `extension/` as an unpacked Chrome extension. Register `server/mcp.mjs` wit
 Download the `.tgz` from the matching GitHub Release:
 
 ```sh
-npm install -g ./runninghub-canvas-bridge-0.9.1.tgz
+npm install -g ./runninghub-canvas-bridge-0.10.2.tgz
 runninghub-canvas-bridge setup
 ```
 

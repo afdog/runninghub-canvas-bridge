@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.2 — media routes and explicit spending consent
+
+- Copies and workflow application clear task/history ownership and adoption while retaining original media provenance; batch shot preparation uses the same rule.
+- Add exact native-history selection (output-only or recorded parameters), guarded deletion, and explicit node-subgraph copying.
+- Add media capability discovery, immutable plans, once-only execution and durable status. Free browser image/frame processing and local FFmpeg editing are separate routes; agents must compare convenience and quality.
+- Canvas media jobs and configured AI image/video processing require owner-key consent bound to the exact plan. Unknown prices are not classified as free; connector authorization and agent-supplied booleans cannot approve spending.
+- Interrupted/unknown submissions are retained and never automatically regenerated. Existing credentials and OAuth registrations are preserved. Paid native execution remains unverified until a user-approved real job; static contracts and blocked-consent tests are not paid acceptance.
+
+## 0.9.4
+
+- Display exact video URLs as playable history previews when the native site supplies MP4 thumbnails. Preview playback does not apply a different result or change canvas data.
+- Preserve already-owned native history when older tasks have expired from batchStatus; newly attached indices still require full task/output proof.
+- Restore native node history using the exact server-owned canvas/node index, with paginated revision checks and independent task/plan/output validation. Only historyStorage is updated; current outputs, inputs, references, links and adoption remain intact.
+- Match native history metadata in generation payloads and persist post-generation reconciliation jobs across disconnects/restarts. Never replay generation or open background canvas tabs.
+- Retry delivery of command receipts without re-executing commands; bound metadata reads to prevent a stalled connection from holding history work indefinitely.
+- Add rh_node_history and rh_sync_node_history (75 tools). Bound read timeouts and reject stale-runtime index writes.
+
+
 ## 0.9.1
 
 - Optional OAuth/PKCE Streamable HTTP gateway for Gemini and Grok Bot, retaining the 73-tool surface and local stdio entrypoint.

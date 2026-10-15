@@ -35,7 +35,7 @@
     "canvas.getDetail", "canvas.workflowList"
   ]);
   const editCommands = new Set([
-    "canvas.addTaskOutput", "canvas.createApp", "canvas.configureApp", "canvas.createModel", "canvas.editGroups", "canvas.transformNodes", "canvas.applyWorkflow", "canvas.platformWrite", "canvas.restoreSnapshot", "canvas.applyLayoutTemplate", "canvas.prepareShots", "canvas.autoLayout", "canvas.addAsset", "canvas.bindReferences", "canvas.batchUpdate",
+    "canvas.processBrowserMedia", "canvas.applyNodeHistory", "canvas.deleteNodeHistory", "canvas.cloneNodes", "canvas.addTaskOutput", "canvas.createApp", "canvas.configureApp", "canvas.createModel", "canvas.editGroups", "canvas.transformNodes", "canvas.applyWorkflow", "canvas.platformWrite", "canvas.restoreSnapshot", "canvas.applyLayoutTemplate", "canvas.prepareShots", "canvas.autoLayout", "canvas.addAsset", "canvas.bindReferences", "canvas.batchUpdate",
     "canvas.createTextNode", "canvas.createTextNodes", "canvas.groupElements",
     "canvas.createNode", "canvas.createVideoNode", "canvas.createImageNode",
     "canvas.prepareImageWorkflow", "canvas.createReferenceImageNode",
@@ -45,7 +45,7 @@
     "canvas.deleteElements", "canvas.rollback", "canvas.cloneTemplate",
     "canvas.uploadReferenceImage", "canvas.uploadLocalReferenceImage", "canvas.uploadLocalMedia"
   ]);
-  const generationCommands = new Set(["canvas.runNode", "canvas.generateVideoNode"]);
+  const generationCommands = new Set(["canvas.runMediaOperation", "canvas.runNode", "canvas.generateVideoNode"]);
   // Arbitrary page evaluation/API calls and snapshot replacement are not tools.
   const commandMode = (command) => readCommands.has(command?.type) ? "read"
     : editCommands.has(command?.type) ? (command.dryRun === true && !command.type.startsWith("canvas.upload") ? "preview" : "edit")

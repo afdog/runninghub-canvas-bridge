@@ -18,14 +18,14 @@ const runtimeSource = (await readFile(new URL("../server/bridge-runtime.js", imp
 
 assert.ok(runtimeSource.includes("window.testHooks ="), "Runtime test hooks must replace the live poll loop");
 
-function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture", generationEnabled = false, apiData = {} } = {}) {
+function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture", generationEnabled = false, apiData = {}, dropResults = 0 } = {}) {
   const remoteDoc = new Y.Doc();
   if (!emptySchema) {
     const content = new Y.Map();
     content.set("nodes", new Y.Array()); content.set("edges", new Y.Array());
     remoteDoc.getMap("canvas").set("canvas_content", content);
   }
-  const writes = [], providers = [], events = [], requests = [];
+  const writes = [], providers = [], events = [], requests = [], payloads = [];
   class Provider {
     constructor(url, room, doc, options) {
       this.url = url; this.room = room; this.doc = doc; this.options = options;
@@ -39,17 +39,18 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
   }
   const token = "test." + Buffer.from(JSON.stringify({ sub: "current-user", exp: 9999999999 })).toString("base64url") + ".synthetic";
   const sandbox = {
-    URL, Headers, console, atob, crypto:webcrypto, TextEncoder, setTimeout: (fn, ms) => setTimeout(fn, ms === 1200 ? 1 : ms), clearTimeout,
+    URL, Headers, AbortSignal, console, atob, crypto:webcrypto, TextEncoder, setTimeout: (fn, ms) => setTimeout(fn, ms === 1200 ? 1 : ms), clearTimeout,
     location: new URL(`https://www.runninghub.ai/project/canvas/${canvasId}`),
     document: { cookie: "Rh-Accesstoken=" + token, title: "Fixture", querySelectorAll: () => [] },
     localStorage: { getItem: () => null },
     testDependencies: { Y, WebsocketProvider: Provider, decoding, messageYjsSyncStep1 },
     __RUNNINGHUB_CANVAS_BRIDGE_ACCESS__: { allowWrites, generationEnabled, canvasId: "fixture", origin: "https://www.runninghub.ai" },
     fetch: async (url, options) => {
-      if (String(url).endsWith("/events")) { events.push(JSON.parse(options.body)); return { ok: true }; }
+      if (String(url).endsWith("/events")) { const event=JSON.parse(options.body); if(event.kind==='command.result'&&dropResults-->0)throw Error('lost receipt');events.push(event); return { ok: true }; }
       requests.push(String(url));
       assert.equal(options.headers.Authorization, "Bearer " + token);
-      const data = apiData[new URL(url).pathname] ?? (String(url).endsWith("/canvas/task/run") ? {taskId: "fixture-task", status: "RUNNING"} : String(url).endsWith("/canvas/getCanvasDetail")
+      const body=options.body?JSON.parse(options.body):{};payloads.push({url:String(url),body});
+      const data = apiData[new URL(url).pathname] ?? (String(url).endsWith('/canvas/node-history/page')?{schemaVersion:1,canvasId,nodeId:body.nodeId,historyId:null,revision:'0',resultCount:0,totalBatchCount:0,batches:[],hasNext:false}:undefined) ?? (String(url).endsWith("/canvas/task/run") ? {taskId: "fixture-task", status: "RUNNING"} : String(url).endsWith("/canvas/getCanvasDetail")
         ? { user_id: "canvas-owner-not-the-current-user" }
         : { yjsGeneration: 5, yjsGenerationRequired: true });
       return { ok: true, status: 200, json: async () => ({ code: 0, data }), text: async () => JSON.stringify({ code: 0, data }) };
@@ -57,7 +58,7 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
   };
   sandbox.window = sandbox;
   vm.runInNewContext(siteSource + "\n" + featureSource + "\n" + productionSource + "\n" + runtimeSource, sandbox);
-  return { sandbox, writes, providers, events, remoteDoc, requests };
+  return { sandbox, writes, providers, events, remoteDoc, requests, payloads, setDropResults:n=>{dropResults=n;} };
 }
 
 test("read session uses current account, international socket and generation without updates", async () => {
@@ -339,4 +340,26 @@ test('AI app creation, exact inputs, preflight and dry-run do not require modelC
  const before=JSON.stringify(f.remoteDoc.toJSON());
  await f.sandbox.testHooks.executeCommand({id:'bad-config',type:'canvas.configureApp',nodeId:'app-node',inputs:[{nodeId:'1',fieldName:'prompt',value:'must not apply'},{nodeId:'2',fieldName:'duration',value:'100'}]});
  assert.equal(f.events.find(e=>e.commandId==='bad-config').ok,false);assert.equal(JSON.stringify(f.remoteDoc.toJSON()),before);f.remoteDoc.destroy();
+});
+
+
+test('generation payload uses the exact native history index and preserves the live current output',async()=>{
+ const f=fixture({allowWrites:true,generationEnabled:true,apiData:{'/canvas/node-history/page':{schemaVersion:1,canvasId:'fixture',nodeId:'run-history',historyId:'own-native-id',revision:'0',resultCount:2,totalBatchCount:2,batches:[],hasNext:false}}});
+ await f.sandbox.testHooks.executeCommand({id:'create-history',type:'canvas.createNode',config:{id:'run-history',type:'rh-text',data:{modelCode:'text-text-rhart-text-g-3-flash-preview',subType:'text-text',params:{prompt:'keep'},output:[{url:'https://example.com/current.mp4'}],historyStorage:{source:'remote',historyId:'foreign-copy',resultCount:99},nodeOutputHistory:[{id:'legacy'}]}}});
+ const before=f.remoteDoc.getMap('canvas').get('canvas_content').toJSON();
+ await f.sandbox.testHooks.executeCommand({id:'run-history',type:'canvas.runNode',nodeId:'run-history'});
+ assert.equal(f.events.find(e=>e.commandId==='run-history').ok,true);
+ const data=f.payloads.find(p=>p.url.endsWith('/canvas/task/run')).body.canvas.nodes[0].data;
+ assert.equal(data.historyStorage.historyId,'own-native-id');assert.equal(data.historyStorage.resultCount,2);assert.equal(data.nodeOutputHistory,undefined);assert.deepEqual(data.output,before.nodes[0].data.output);
+ assert.deepEqual(f.remoteDoc.getMap('canvas').get('canvas_content').toJSON(),before);f.remoteDoc.destroy();
+});
+
+
+test('lost result delivery retries the receipt without resubmitting generation',async()=>{
+ const f=fixture({allowWrites:true,generationEnabled:true,dropResults:0});
+ await f.sandbox.testHooks.executeCommand({id:'make-receipt-test',type:'canvas.createTextNode',config:{id:'receipt-node',text:'keep'}});
+ assert.equal(f.events.filter(e=>e.commandId==='make-receipt-test').length,1);
+ f.setDropResults(2);
+ await f.sandbox.testHooks.executeCommand({id:'receipt-run',type:'canvas.runNode',nodeId:'receipt-node'});
+ assert.equal(f.requests.filter(u=>u.endsWith('/canvas/task/run')).length,1);assert.equal(f.events.find(e=>e.commandId==='receipt-run').result.task.taskId,'fixture-task');f.remoteDoc.destroy();
 });

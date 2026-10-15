@@ -69,7 +69,7 @@
     }
   };
 
-  const postEvent = (event) => {
+  const postEvent = async (event) => {
     const payload = {
       clientId: CLIENT_ID,
       browserSource: window.__RUNNINGHUB_CANVAS_BRIDGE_BROWSER_SOURCE__ || "unknown",
@@ -84,12 +84,17 @@
       runtimeCommands: window.__RUNNINGHUB_CANVAS_BRIDGE__?.commands,
       ...event
     };
-    fetch(`${BRIDGE}/events`, {
-      method: "POST",
-      mode: "cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    }).catch(() => {});
+    // Retry delivery of the same receipt, never execution of its command.
+    const attempts=event.kind==='command.result'?4:1;
+    for(let attempt=0;attempt<attempts;attempt++){
+      try{
+        const response=await fetch(`${BRIDGE}/events`, {method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(8000)});
+        if(response.ok)return true;
+        if(response.status===409)return false;
+      }catch{}
+      if(attempt+1<attempts)await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));
+    }
+    return false;
   };
 
   const sessionToken = () => {
@@ -214,7 +219,7 @@
     const token = sessionToken();
     const requestData = async (endpoint, body) => {
       const response = await fetch(new URL(endpoint, SITE_POLICY.parseCanvas(location.href).apiOrigin), {
-        method: "POST", headers: authHeaders(), credentials: "include", body: JSON.stringify(body)
+        method: "POST", headers: authHeaders(), credentials: "include", body: JSON.stringify(body), signal:AbortSignal.timeout(20000)
       });
       if (!response.ok) throw new Error(`Canvas request failed (${response.status})`);
       const payload = await response.json();
@@ -1678,6 +1683,18 @@
         canvas: subgraph
       };
     });
+    // Match native gL: resolve this exact node's remote index before submission.
+    // Do not import another node's copied historyStorage or alter the live output/inputs.
+    const history = await productionTools.nodeHistory({nodeId:target});
+    const runData = payload.canvas.nodes.find(n=>n.id===target).data;
+    if (history.resultCount > 0) {
+      runData.historyStorage = {source:'remote',schemaVersion:1,historyId:history.historyId,revision:history.revision,resultCount:history.resultCount};
+      delete runData.nodeOutputHistory;
+      delete runData.selectedOutputHistoryId;
+      delete runData.selectedOutputHistoryIndex;
+    } else if(runData.historyStorage?.source==='remote') {
+      delete runData.historyStorage;
+    }
     if (dryRun) return { dryRun: true, submitted: false, request: payload };
     const response = await postJson("/canvas/task/run", payload, maxChars);
     const task = taskInfoFromRunResponse(response);
@@ -2005,7 +2022,7 @@
       }
       const id = nodeId || `node_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       if (current.some(node => node.id === id)) throw new Error(`DUPLICATE_NODE_ID: ${id}`);
-      const node = JSON.parse(JSON.stringify(source));
+      const node = globalThis.RHProductionFeatures.cloneGraph({nodes:[source],edges:[]},{prefix:id,keepOutputs:false}).nodes[0];
       Object.assign(node, { id, position: { x: Number(x), y: Number(y) }, selected: false, zIndex: current.length + 1 });
       for (const key of ["parentNode", "parentId", "extent", "positionAbsolute", "dragging", "measured"]) delete node[key];
       for (const key of ["output", "taskId", "jobId", "progress", "error", "errorMsg", "queuePosition"]) delete node.data[key];
@@ -2824,7 +2841,7 @@
 
   const platformApi = async (endpoint,body) => {
       if(endpoint==='/api/webapp/user/list')body={...body,userId:sessionUserId(sessionToken())};
-      const response=await fetch(new URL(endpoint,SITE_POLICY.parseCanvas(location.href).apiOrigin),{method:'POST',headers:authHeaders(),credentials:'include',body:JSON.stringify(body)});
+      const response=await fetch(new URL(endpoint,SITE_POLICY.parseCanvas(location.href).apiOrigin),{method:'POST',headers:authHeaders(),credentials:'include',body:JSON.stringify(body),...(['/canvas/node-history/page','/canvas/task/batchStatus'].includes(endpoint)?{signal:AbortSignal.timeout(20000)}:{})});
       if(!response.ok) throw new Error(`PLATFORM_API_ERROR: ${response.status}`);
       const payload=await response.json();
       if(payload.code!==undefined && Number(payload.code)!==0) throw new Error(`PLATFORM_API_ERROR: ${payload.code}: ${String(payload.msg || payload.message || "").slice(0,250)}`);
@@ -2836,7 +2853,7 @@
     readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,getTitle:getNodeTitle
   });
 
-  const productionTools = globalThis.RHProductionFeatures?.create({api:platformApi,withMutation:withCanvasMutation,readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,models:featureTools}) || {};
+  const productionTools = globalThis.RHProductionFeatures?.create({api:platformApi,withMutation:withCanvasMutation,readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,models:featureTools,uploadImage:uploadLocalReferenceImage,isCurrent:()=>window.__RUNNINGHUB_CANVAS_BRIDGE__?.clientId===CLIENT_ID}) || {};
 
   const executeCommand = async (command) => {
     if (!command || !command.id) return;
@@ -2987,9 +3004,9 @@
       } else {
         throw new Error(`Unknown command type: ${command.type}`);
       }
-      postEvent({ kind: "command.result", commandId: command.id, ok: true, result: safeJson(result) });
+      await postEvent({ kind: "command.result", commandId: command.id, ok: true, result: safeJson(result) });
     } catch (error) {
-      postEvent({
+      await postEvent({
         kind: "command.result",
         commandId: command.id,
         ok: false,
@@ -3039,7 +3056,9 @@
     commands: COMMAND_CAPABILITIES.filter((item) => SITE_POLICY.commandMode(item) !== "blocked").map((capability) => capability.type)
   };
 
+  const cleanupHistoryMedia=globalThis.RHHistoryMediaPreview?.install() || (()=>{});
   window.__RUNNINGHUB_CANVAS_BRIDGE_CLEANUP__ = () => {
+    cleanupHistoryMedia();
     if (pollTimer) clearTimeout(pollTimer);
     if (originalFetch) window.fetch = originalFetch;
     if (OriginalXHR) window.XMLHttpRequest = OriginalXHR;
