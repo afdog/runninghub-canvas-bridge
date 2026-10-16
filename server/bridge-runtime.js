@@ -2981,9 +2981,20 @@
         result = await deleteElements(command);
       } else if (command.type === "canvas.getDetail") {
         result = await postJson("/canvas/getCanvasDetail", { id: SITE_POLICY.parseCanvas(location.href).canvasId }, command.maxChars);
+      } else if (command.type === 'canvas.checkLayout') {
+        const before=await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx));
+        const media=await globalThis.RHLayoutTemplate.resolveMediaSizes(before,before.nodes.map(n=>n.id));
+        const current=await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx));
+        if(FEATURES.canonical(current)!==FEATURES.canonical(before))throw Error('EDIT_CONFLICT: canvas changed while checking layout');
+        result={...globalThis.RHLayoutTemplate.check(current,{mediaSizes:media.sizes}),unresolvedMediaSizes:media.unresolved};
       } else if (command.type === 'canvas.applyLayoutTemplate') {
+        const before=await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx));
+        const memberIds=command.groups.flatMap(g=>g.nodeIds||g.columns.flat());
+        const media=await globalThis.RHLayoutTemplate.resolveMediaSizes(before,memberIds);
         result=await withCanvasMutation(command,({Y,doc,nodes,edges,canvasId})=>{
-          const plan=globalThis.RHLayoutTemplate.plan({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges),canvasId},command.groups,command.options);
+          const current={nodes:yArrayToJson(nodes),edges:yArrayToJson(edges),canvasId};
+          if(FEATURES.canonical(current)!==FEATURES.canonical(before))throw Error('EDIT_CONFLICT: canvas changed while checking media dimensions');
+          const plan=globalThis.RHLayoutTemplate.plan(current,command.groups,{...command.options,mediaSizes:media.sizes});
           const updates=new Map(plan.updates.map(n=>[n.id,n]));
           doc.transact(()=>{
             for(let i=0;i<nodes.length;i++){
@@ -2992,7 +3003,7 @@
             }
             for(const n of updates.values())nodes.push([toYValue(Y,n)]);
           });
-          return {templateId:plan.templateId,nodeIds:plan.nodeIds,groupIds:plan.groupIds,edgesChanged:0,deletedNodes:0};
+          return {templateId:plan.templateId,templateVersion:plan.templateVersion,nodeIds:plan.nodeIds,groupIds:plan.groupIds,unresolvedMediaSizes:media.unresolved,edgesChanged:0,deletedNodes:0};
         });
       } else if (command.type === "canvas.workflowList") {
         result = await postJson("/canvas/workflow/list", { canvasId: SITE_POLICY.parseCanvas(location.href).canvasId }, command.maxChars);

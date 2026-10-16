@@ -55,11 +55,15 @@
 
 ## 排版与批量准备
 
-- 每个新任务读取持久布局模板，按场次纵向、镜头横向和公共资产分区组织；可通过 `rh_set_layout_template` 保存几何偏好。
-- `rh_prepare_shots` 批量复制空模板、填词、绑定和安排位置，不提交生成。
-- `rh_edit_groups`、`rh_transform_nodes`、`rh_align_nodes` 管理分组及几何；`rh_check_layout` 检查基本重叠和成员缺失。
-- `rh_auto_layout` 用于未分组节点；已有分组使用明确几何或模板工具。
-- 改前读取、尽可能预览、改后回读；`rh_batch_update_nodes` 必须传当前节点版本指纹。不要仅为展示复制生产素材。
+新任务先读取 `rh_get_layout_template`。默认场次纵向、同场镜头横向，每行最多 4 个镜头后换行；公共资产也按网格排列。不要把全部镜头塞进 `columns` 的同一列。独立节点直接传 `groups[].nodeIds`；`columns` 的每列只放同一镜头及至多 3 张相关卡，确实需要长堆叠时显式使用 `layoutMode: "stack"`。`rh_set_layout_template` 的 `maxColumns` 可调整行宽。
+
+`rh_apply_layout_template` 先读取所选媒体真实宽高，再使用生成比例或已有显示尺寸。横屏适配 320×180、竖屏 180×320、方图 240×240，并同步原生显示尺寸锁和组边界。返回 `unresolvedMediaSizes` 时说明部分媒体没能解码，不能宣称真实画幅已全部核验；补充检查后再排。生成结果更换后重新检查比例。`rh_check_layout` 检查组内和组间重叠、比例、预览变尺寸风险及组成员/偏移/边界；预览或刷新后再次调用。
+
+用户已明确淘汰的节点用 `rh_cleanup_canvas`，不要因为“保留历史”继续在画布中占位。传准确节点、`reason: "user_rejected"` 和当前用户决定的简短依据；先 `dryRun: true`，再带返回的 `currentDigest` 执行。工具保存恢复快照、清理受影响的空组，且不删除媒体库文件或原生历史。已有明确决定无需再次询问；英文 PASS 也可能是“通过”，仅凭标题不得猜测淘汰。仍在运行、已采用、或继续被其他节点使用的内容会返回阻止原因，先按真实依赖处理。
+
+优先 `rh_create_app` 创建原生应用，避免拖入应用附带空输入节点。`rh_configure_app` 默认移除原生标记的空且未绑定/未引用输入，并返回清理明细；有素材、文字或其他用途的输入保留。可用 `cleanupUnusedInputs: false` 关闭本次空输入清理。`rh_cleanup_canvas` 也可检查 `unused_app_input`，但不会自动删除未明确列入请求的候选。
+
+批量制作使用 `rh_prepare_shots`，完整提供提示词、参数和引用；它只准备节点，不提交生成。已有分组用模板排版；`rh_auto_layout` 仅用于未分组节点。
 
 ## 生成、结果和下载
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.3 — layout geometry and explicit canvas cleanup
+
+- Wrap shots/assets into four-column grids by default; reject accidental long columns unless explicitly requested.
+- Resolve actual media dimensions, distinguish portrait/landscape/square previews, and synchronize native size locks to prevent preview-driven overlap.
+- Check overlapping group members, stale offsets, bounds, aspect mismatch and preview resizing risks.
+- Add `rh_cleanup_canvas` with whole-graph revision checks and recovery snapshots for explicit user rejections or verified empty app inputs; preserve referenced/adopted/running content and stored media/history.
+- App configuration removes only empty native-created, unbound inputs; new applications avoid creating placeholders.
+- Validation: 119 local tests passed with 2 Windows-only skips; 53 targeted Windows checks passed.
+- Production canvases are not reorganized or cleaned by installing this update. Native sizing analysis/replay and synthetic tests do not claim live production visual acceptance.
+
 ## 0.10.2 — media routes and explicit spending consent
 
 - Copies and workflow application clear task/history ownership and adoption while retaining original media provenance; batch shot preparation uses the same rule.

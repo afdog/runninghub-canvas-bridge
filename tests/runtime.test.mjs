@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import {webcrypto} from "node:crypto";
 const productionSource=await readFile(new URL("../server/production-features.js",import.meta.url),"utf8");
+const layoutSource=await readFile(new URL('../server/layout-template.js',import.meta.url),'utf8');
+const cleanupSource=await readFile(new URL('../server/canvas-cleanup.js',import.meta.url),'utf8');
 const featureSource=await readFile(new URL("../server/canvas-features.js",import.meta.url),"utf8");
 import * as Y from "yjs";
 import * as decoding from "lib0/decoding";
@@ -39,7 +41,7 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
   }
   const token = "test." + Buffer.from(JSON.stringify({ sub: "current-user", exp: 9999999999 })).toString("base64url") + ".synthetic";
   const sandbox = {
-    URL, Headers, AbortSignal, console, atob, crypto:webcrypto, TextEncoder, setTimeout: (fn, ms) => setTimeout(fn, ms === 1200 ? 1 : ms), clearTimeout,
+    URL, Headers, AbortSignal, console, atob, structuredClone, crypto:webcrypto, TextEncoder, setTimeout: (fn, ms) => setTimeout(fn, ms === 1200 ? 1 : ms), clearTimeout,
     location: new URL(`https://www.runninghub.ai/project/canvas/${canvasId}`),
     document: { cookie: "Rh-Accesstoken=" + token, title: "Fixture", querySelectorAll: () => [] },
     localStorage: { getItem: () => null },
@@ -57,7 +59,7 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
     }
   };
   sandbox.window = sandbox;
-  vm.runInNewContext(siteSource + "\n" + featureSource + "\n" + productionSource + "\n" + runtimeSource, sandbox);
+  vm.runInNewContext(siteSource + "\n" + featureSource + "\n" + layoutSource + "\n" + cleanupSource + "\n" + productionSource + "\n" + runtimeSource, sandbox);
   return { sandbox, writes, providers, events, remoteDoc, requests, payloads, setDropResults:n=>{dropResults=n;} };
 }
 
@@ -362,4 +364,17 @@ test('lost result delivery retries the receipt without resubmitting generation',
  f.setDropResults(2);
  await f.sandbox.testHooks.executeCommand({id:'receipt-run',type:'canvas.runNode',nodeId:'receipt-node'});
  assert.equal(f.requests.filter(u=>u.endsWith('/canvas/task/run')).length,1);assert.equal(f.events.find(e=>e.commandId==='receipt-run').result.task.taskId,'fixture-task');f.remoteDoc.destroy();
+});
+
+test('wrapped layout dispatch preserves content and cleanup is revision-pinned with a recoverable mutation diff',async t=>{
+ const f=workflowFixture();t.after(()=>f.remoteDoc.destroy());await f.seed();
+ const edgesBefore=JSON.stringify(f.edges()),paramsBefore=JSON.stringify(f.nodes().find(n=>n.id==='blank').data.params);
+ const preview=await f.run('canvas.applyLayoutTemplate',{groups:[{id:'group',title:'Grid',nodeIds:['a','b','blank']}],dryRun:true});
+ assert.equal(preview.ok,true,preview.error);assert.equal(f.nodes().length,3);
+ const apply=await f.run('canvas.applyLayoutTemplate',{groups:[{id:'group',title:'Grid',nodeIds:['a','b','blank']}]});
+ assert.equal(apply.ok,true,apply.error);assert.equal(JSON.stringify(f.edges()),edgesBefore);assert.equal(JSON.stringify(f.nodes().find(n=>n.id==='blank').data.params),paramsBefore);
+ const checked=await f.run('canvas.checkLayout');assert.equal(checked.ok,true,checked.error);assert.equal(checked.result.passes,true);
+ const before={nodes:f.nodes(),edges:f.edges()},entries=[{nodeId:'a',reason:'user_rejected',decisionNote:'Fixture discard'}];
+ const result=await f.run('canvas.cleanupNodes',{entries,expected:before});assert.equal(result.ok,true,result.error);assert.ok(result.result.rollbackId);assert.equal(f.nodes().some(n=>n.id==='a'),false);assert.equal(f.nodes().find(n=>n.id==='group').data.nodeIds.includes('a'),false);
+ const stale=await f.run('canvas.cleanupNodes',{entries,expected:before});assert.equal(stale.ok,false);assert.match(stale.error,/EDIT_CONFLICT/);assert.equal(f.requests.some(u=>u.endsWith('/task/run')),false);
 });

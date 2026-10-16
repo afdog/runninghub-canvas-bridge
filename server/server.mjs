@@ -46,7 +46,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.10.2";
+const PRODUCT_VERSION = "0.10.3";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -87,15 +87,16 @@ const cleanHref = (href) => {
 };
 
 const runtimeInfo = async () => {
-  const [runtime, runtimeSource, sitePolicy, features, layoutTemplate, productionFeatures, historyMediaPreview] = await Promise.all([
+  const [runtime, runtimeSource, sitePolicy, features, layoutTemplate, productionFeatures, historyMediaPreview, cleanup] = await Promise.all([
     stat(RUNTIME_PATH), readFile(RUNTIME_PATH, "utf8"),
     readFile(new URL("../extension/site-policy.js", import.meta.url), "utf8"),
     readFile(new URL("./canvas-features.js", import.meta.url), "utf8"),
     readFile(new URL("./layout-template.js", import.meta.url), "utf8"),
     readFile(new URL("./production-features.js", import.meta.url), "utf8"),
-    readFile(new URL("./history-media-preview.js", import.meta.url), "utf8")
+    readFile(new URL("./history-media-preview.js", import.meta.url), "utf8"),
+    readFile(new URL("./canvas-cleanup.js", import.meta.url), "utf8")
   ]);
-  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${productionFeatures}\n${historyMediaPreview}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
+  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${cleanup}\n${productionFeatures}\n${historyMediaPreview}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
   return {
     mtimeMs: runtime.mtimeMs,

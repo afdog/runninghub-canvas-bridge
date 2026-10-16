@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-0.10.2 共 **82** 个工具。以下描述由当前 MCP 工具清单生成；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
+0.10.3 共 **83** 个工具。以下描述由当前 MCP 工具清单生成；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
 
 所有画布工具携带任务自己的 `scopeId`。连接、账号目录和独立下载状态等工具不需要画布 scope。参见 [调用流程](../AGENT_QUICKSTART.md)。
 
@@ -117,3 +117,9 @@
 | `rh_media_operation_status` | Recover original job/receipt or a verified local output, without resubmission. |
 
 Local FFmpeg and browser pixel operations use no RunningHub generation credits. Native FFMPEG jobs and AI model processing are conservatively marked unknown-cost until a reliable exact quote is integrated. The caller must compare free routes instead of defaulting to the canvas. See [agent workflow](../AGENT_QUICKSTART.md#media-processing-and-spending-consent-010).
+
+## Layout and cleanup (0.10.3)
+
+`rh_apply_layout_template` accepts independent `nodeIds` grids or short shot `columns`, wraps at persistent `maxColumns` (default 4), resolves media metadata, and locks native image display sizes. `rh_check_layout` now includes same-group overlap and preview geometry risk.
+
+`rh_cleanup_canvas` previews exact user-rejected nodes or verified empty app-created inputs, then accepts the preview digest to apply with a private recovery snapshot. It protects adopted, running and referenced nodes and never deletes media files or native history. Explicit user rejection is sufficient; PASS alone is not a rejection signal. `rh_configure_app` prunes only empty unused native input scaffolds by default. See the [agent layout guide](../AGENT_QUICKSTART.md#排版与批量准备).

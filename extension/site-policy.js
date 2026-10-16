@@ -25,7 +25,7 @@
     } catch { return null; }
   };
   const readCommands = new Set([
-    "canvas.appSchema", "canvas.appPreflight", "canvas.platformRead", "canvas.preflight", "canvas.listModels", "canvas.modelSchema", "canvas.searchAssets", "canvas.inspectReferences",
+    "canvas.checkLayout", "canvas.appSchema", "canvas.appPreflight", "canvas.platformRead", "canvas.preflight", "canvas.listModels", "canvas.modelSchema", "canvas.searchAssets", "canvas.inspectReferences",
     "graph.snapshot", "canvas.exportWorkflow", "canvas.yjsSnapshot", "canvas.summary",
     "canvas.capabilities", "canvas.rollbackList", "canvas.findElements",
     "canvas.findReferenceCandidates", "canvas.describeImageNode", "canvas.suggestEmptyRegion",
@@ -35,7 +35,7 @@
     "canvas.getDetail", "canvas.workflowList"
   ]);
   const editCommands = new Set([
-    "canvas.processBrowserMedia", "canvas.applyNodeHistory", "canvas.deleteNodeHistory", "canvas.cloneNodes", "canvas.addTaskOutput", "canvas.createApp", "canvas.configureApp", "canvas.createModel", "canvas.editGroups", "canvas.transformNodes", "canvas.applyWorkflow", "canvas.platformWrite", "canvas.restoreSnapshot", "canvas.applyLayoutTemplate", "canvas.prepareShots", "canvas.autoLayout", "canvas.addAsset", "canvas.bindReferences", "canvas.batchUpdate",
+    "canvas.processBrowserMedia", "canvas.applyNodeHistory", "canvas.deleteNodeHistory", "canvas.cloneNodes", "canvas.addTaskOutput", "canvas.createApp", "canvas.configureApp", "canvas.createModel", "canvas.editGroups", "canvas.cleanupNodes", "canvas.transformNodes", "canvas.applyWorkflow", "canvas.platformWrite", "canvas.restoreSnapshot", "canvas.applyLayoutTemplate", "canvas.prepareShots", "canvas.autoLayout", "canvas.addAsset", "canvas.bindReferences", "canvas.batchUpdate",
     "canvas.createTextNode", "canvas.createTextNodes", "canvas.groupElements",
     "canvas.createNode", "canvas.createVideoNode", "canvas.createImageNode",
     "canvas.prepareImageWorkflow", "canvas.createReferenceImageNode",

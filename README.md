@@ -8,8 +8,8 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.10.2-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
-[![MCP](https://img.shields.io/badge/MCP-82_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
+[![Version](https://img.shields.io/badge/version-0.10.3-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![MCP](https://img.shields.io/badge/MCP-83_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
 
@@ -37,6 +37,8 @@
 安装专用扩展后，**不需要外部 Chrome 提供画布连接**。打开画布和账号目录请求优先使用在线的内置浏览器，也可明确指定浏览器来源。仍需本机桥接服务运行。
 
 ### 多个对话，各自操作自己的画布
+
+默认场次分组纵向、镜头每行四列，按真实横竖画幅预留空间，避免预览后重叠。明确淘汰节点可经依赖检查和快照备份后清理；应用配置会清理空的未使用输入。
 
 每个任务持有独立 `scopeId`；自动开页会固定到具体页面。其他对话选择另一张画布，不会改变当前任务的目标。页面刷新或连接失效后重新打开获取连接，同一画布的写入仍需遵守版本检查。
 
@@ -107,9 +109,9 @@ rh_canvas_summary / get_node  检查已有内容
 | 项目 | 当前情况 |
 | --- | --- |
 | 节点历史 | 原生历史读取、按真实任务修复索引；生成完成后自动同步，断线与重启后续接 |
-| 工具 | 82 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
+| 工具 | 83 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 本地 108 项通过；2 项 Windows 专用检查在 macOS 跳过；Windows 相关测试 51 项通过。完整跨平台结果以 Actions 为准 |
+| 自动测试 | 0.10.3 本地 119 项通过、2 项 Windows 专用跳过；Windows 相关测试 53 项通过。完整跨平台 CI 记录见 Actions |
 | 免费媒体处理 | 已实测浏览器截帧、图片裁剪、保存回读，以及本地 FFmpeg 处理；付费路径已验证未授权时拒绝提交 |
 | Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
 | 远程 HTTP 接口 | 公网 OAuth 已验证（0.9.1 的 73 工具）；Gemini 英文界面、Grok Bot 均已实测状态、布局模板、目录、画布连接与摘要，支持中文指令 |
@@ -126,7 +128,7 @@ rh_canvas_summary / get_node  检查已有内容
 | [安装说明](AGENT_INSTALL.md) | 浏览器扩展、本机 MCP、后台服务、ChatGPT 插件、升级 |
 | [Agent 快速上手](AGENT_QUICKSTART.md) | 任务连接、应用参数、媒体、下载、冲突与恢复 |
 | [远程 MCP 接入](docs/REMOTE_MCP.md) | Gemini、Grok Bot 等远程客户端的 HTTPS 网关、OAuth 与域名配置 |
-| [82 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
+| [83 个工具](docs/TOOLS.md) | 按能力分组的完整工具目录；准确参数以工具 schema 为准 |
 | [自动更新](docs/AUTO_UPDATE.md) | 开启、暂停、保留授权、空闲切换与失败恢复 |
 | [更新记录](CHANGELOG.md) | 版本变化与兼容性调整 |
 | [贡献指南](CONTRIBUTING.md) | 开发和反馈 |

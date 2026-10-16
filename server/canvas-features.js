@@ -203,9 +203,9 @@
       });
       const rectangle = n => ({x:Number(n.position?.x || 0),y:Number(n.position?.y || 0),width:Math.max(100,Number(n.measured?.width || n.width || n.data?.width || 420)),height:Math.max(100,Number(n.measured?.height || n.height || n.data?.height || 380))});
       const overlaps = (a,b,gap) => a.x < b.x+b.width+gap && a.x+a.width+gap > b.x && a.y < b.y+b.height+gap && a.y+a.height+gap > b.y;
-      const layoutPlan = (snapshot,ids,{x=0,y=0,gap=100,columns=3}={}) => {
+      const layoutPlan = (snapshot,ids,{x=0,y=0,gap=100,columns=4}={}) => {
         if(new Set(ids).size!==ids.length) throw new Error('DUPLICATE_NODE_ID');
-        if(snapshot.nodes.some(n=>n.parentId || n.parentNode)) throw new Error('GROUPED_LAYOUT_UNSUPPORTED: ungroup before automatic layout');
+        if(snapshot.nodes.some(n=>n.parentId || n.parentNode) || snapshot.nodes.some(n=>ids.includes(n.id) && (n.type==='group'||n.data?.groupId))) throw new Error('GROUPED_LAYOUT_UNSUPPORTED: ungroup before automatic layout');
         const obstacles=snapshot.nodes.filter(n=>!ids.includes(n.id)).map(rectangle),positions=[];
         let rowY=y,rowHeight=0,cursorX=x;
         for(const [index,id] of ids.entries()) {
@@ -224,12 +224,15 @@
         return positions;
       };
       const autoLayout = async command => {
-        const before=await readSnapshot(),positions=layoutPlan(before,command.nodeIds,command);
+        const before=await readSnapshot(),planned=structuredClone(before);
+        const media=await globalThis.RHLayoutTemplate.resolveMediaSizes(before,command.nodeIds);
+        planned.nodes=planned.nodes.map(n=>command.nodeIds.includes(n.id)?globalThis.RHLayoutTemplate.normalize(n,media.sizes[n.id]):n);
+        const positions=layoutPlan(planned,command.nodeIds,command);
         const expectedRevisions=await pin(before,before.nodes.map(n=>n.id),command.expectedRevisions);
         return withMutation({...command,expectedRevisions},({Y,doc,nodes,edges})=>{
           const all=nodes.toJSON();
           if(all.length!==before.nodes.length) throw new Error('EDIT_CONFLICT: layout obstacles changed');
-          doc.transact(()=>{for(const p of positions){const i=all.findIndex(n=>n.id===p.nodeId);nodes.delete(i,1);nodes.insert(i,[toYValue(Y,{...all[i],position:{x:p.x,y:p.y}})]);}});
+          doc.transact(()=>{for(const p of positions){const i=all.findIndex(n=>n.id===p.nodeId);nodes.delete(i,1);nodes.insert(i,[toYValue(Y,{...planned.nodes.find(n=>n.id===p.nodeId),position:{x:p.x,y:p.y}})]);}});
           return {positions,generationTriggered:false};
         });
       };
@@ -255,6 +258,7 @@
           if(!pre.ok) throw new Error(`PREFLIGHT_FAILED: ${node.id}: ${pre.errors.join('; ')}`);
           reports.push({nodeId:node.id,warnings:pre.warnings});
         }
+        planned.nodes=planned.nodes.map(n=>ids.includes(n.id)&&globalThis.RHLayoutTemplate?globalThis.RHLayoutTemplate.normalize(n):n);
         const positions=layoutPlan(planned,ids,command.layout);
         for(const p of positions) planned.nodes.find(n=>n.id===p.nodeId).position={x:p.x,y:p.y};
         const expectedRevisions=await pin(before,before.nodes.map(n=>n.id),command.expectedRevisions);

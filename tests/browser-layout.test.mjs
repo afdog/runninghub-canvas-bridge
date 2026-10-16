@@ -27,7 +27,7 @@ test('scene layout preserves content, edges, grouping and aspect ratio while avo
  const result=plan(snapshot,[{id:'g',title:'S01',columns:[['a'],['b']]}]);
  assert.equal(JSON.stringify(snapshot),before);assert.equal(result.deletedNodes,0);assert.equal(result.edgesChanged,0);
  const a=result.updates.find(n=>n.id==='a'),g=result.updates.find(n=>n.id==='g'),b=result.updates.find(n=>n.id==='b');
- assert.equal(a.width,180);assert.equal(a.height,180);assert.equal(a.data.prompt,'完整正文');assert.equal(a.data.taskId,'task');assert.deepEqual(b.data.params,nodes[1].data.params);assert.ok(g.position.y>=1000);assert.ok(b.position.x>a.position.x+a.width);assert.deepEqual(g.data.nodeIds,['a','b']);assert.equal(g.data.nodeOffsets.a.x,a.position.x-g.position.x);
+ assert.equal(a.width,240);assert.equal(a.height,240);assert.equal(a.data.prompt,'完整正文');assert.equal(a.data.taskId,'task');assert.deepEqual(b.data.params,nodes[1].data.params);assert.ok(g.position.y>=1000);assert.ok(b.position.x>a.position.x+a.width);assert.deepEqual(g.data.nodeIds,['a','b']);assert.equal(g.data.nodeOffsets.a.x,a.position.x-g.position.x);
  const again=plan({nodes:[...result.updates,nodes[2]],edges:snapshot.edges},[{id:'g',title:'S01',columns:[['a'],['b']]}]);assert.deepEqual(again.updates,result.updates);
 });
 test('layout rejects duplicate nodes and partial groups before mutation',()=>{
