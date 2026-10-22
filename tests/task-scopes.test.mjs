@@ -19,3 +19,10 @@ test('pinned page never falls back to another browser showing the same canvas',a
  const scopes=new TaskScopes(client);const original=BridgeClient.prototype.request;
  try{BridgeClient.prototype.request=async()=>({access:{origin:'https://rhtv.runninghub.ai',canvasId:'123',clientId:'internal'}});assert.equal((await scopes.resolve('scope')).pinnedClientId,'internal');}finally{BridgeClient.prototype.request=original;}
 });
+
+test('scoped command combines session and target lookup, server remains authoritative',async()=>{
+ const original=BridgeClient.prototype.request,requests=[];
+ try{BridgeClient.prototype.request=async function(path,body){requests.push(path.split('?')[0]);if(path.startsWith('/sessions'))return{access:{origin:'https://www.runninghub.ai',canvasId:'fixture',clientId:'p'},target:{clientId:'p',canvasId:'fixture',canvasOrigin:'https://www.runninghub.ai'}};if(path==='/command')return{id:body.id};if(path.startsWith('/result'))return{ok:true,result:{ok:true}};throw Error(path);};
+ const scopes=new TaskScopes(new BridgeClient());await scopes.run('canvas',{scopeId:'scope'},()=>scopes.proxy.command('canvas.summary'));assert.deepEqual(requests,['/sessions','/command','/result']);
+ }finally{BridgeClient.prototype.request=original;}
+});

@@ -1,6 +1,8 @@
 # Remote MCP for Gemini and other web clients
 
-The optional gateway serves the same 73 tools over authenticated Streamable HTTP. Local stdio clients and the ChatGPT Secure MCP Tunnel retain their existing entrypoints. Public HTTPS OAuth, tool discovery and a status call have passed live checks. Gemini account linking, discovery of all 73 tools, and actual status, layout-template, canvas catalog, exact-canvas open and summary calls have passed in its English interface. A Chinese prompt also completed the catalog/open/summary flow. Account linking alone does not prove a chat can invoke the tools; paid generation and Gemini attachment upload were not part of these checks.
+The optional gateway serves the same **83 tools in 0.10.7** over authenticated Streamable HTTP. Local stdio clients and the ChatGPT Secure MCP Tunnel retain their existing entrypoints. Version 0.10.7 passed public OAuth/PKCE, refresh-token rotation, complete tool discovery, status, layout-template, exact-canvas selection, summary and model-query checks against a Windows-hosted gateway, preserving existing account grants.
+
+The original 0.9.1 Gemini and Grok checks used 73 tools. Gemini's English interface completed real status, layout-template, catalog, canvas-open and summary calls, including Chinese prompts. Those client-interface checks are historical; the 0.10.7 verification exercised the public MCP endpoint directly. Paid generation and Gemini attachment upload were not part of these checks.
 
 ## Run the gateway
 
@@ -62,10 +64,12 @@ Keep the HTTPS origin unchanged to preserve client configuration. Stop the old g
 
 On Windows, launch persistent processes in the intended Windows user session, for example with Task Scheduler and an interactive logon principal. Processes started through an SSH session can be terminated when that session closes. The browser still needs a logged-in Windows session and a valid RunningHub login. Use an absolute `RH_FFPROBE` path for the bridge. If an unusually long `PATH` causes npm scripts to lose access to Node, use a concise installation-process `PATH` rather than replacing the user's system configuration. Where QUIC repeatedly times out, configure the named tunnel to use `--protocol http2` and verify actual public tool calls.
 
-Windows live validation covered 75 passing automated tests, browser catalog/open/read calls, a public route handoff retaining an existing access grant, OAuth refresh, and gateway-process recovery. Paid generation, cross-computer Lumen import and full-machine reboot recovery were not tested in this deployment.
+The original Windows deployment verified browser catalog/open/read calls, a public route handoff retaining an existing access grant, OAuth refresh and gateway-process recovery. Version 0.10.7 passed all 196 automated tests on Windows, including isolated service lifecycle tests, plus public MCP reads after an in-place upgrade. Paid generation, cross-computer Lumen import and full-machine reboot recovery were not tested in this deployment.
 
 References: [Gemini custom apps](https://support.google.com/gemini/answer/17209137?co=GENIE.Platform%3DDesktop&hl=en), [MCP HTTP](https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html), [MCP authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization), [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/get-started/).
 
 ## Updates without relinking accounts
 
 Enable the [automatic updater](AUTO_UPDATE.md) on the host running this gateway. Keep the public URL, private configuration and live `oauth-state.json` in place. Ordinary upgrades restart the gateway and preserve account grants; do not re-run `init` or restore an older OAuth state. Client tool-list caches can need a refresh.
+
+If `/health` opens in a browser but a Node-based diagnostic times out, compare their network paths. The diagnostic may bypass an existing `HTTPS_PROXY`. A Node release that lists `--use-env-proxy` in its help can run the diagnostic with that flag; other runtimes need their supported proxy configuration. Keep TLS verification enabled. Recover any uncertain write by its original request ID before retrying.

@@ -8,7 +8,7 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.10.3-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![Version](https://img.shields.io/badge/version-0.10.7-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
 [![MCP](https://img.shields.io/badge/MCP-83_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
@@ -18,6 +18,15 @@
 </div>
 
 ---
+
+## 0.10.7 更新亮点
+
+| 历史留在原节点 | 制作保持整洁 | 调用更顺畅 |
+| :--- | :--- | :--- |
+| 修复 301 历史路由冲突，保留真实任务和输出 | 同一 P 复用原应用，迭代保留原生历史 | 四个独立浏览器任务槽，减少互相等待 |
+| 修复前保存快照，后续历史继续合并同步 | 板块每行两组、组内四列，适配横竖画幅 | 长轮询、批量读取与原请求回执恢复 |
+
+本次正式版包含 0.10.4–0.10.7 的累计改进。升级保留现有配置和 OAuth 授权；已有画布的历史修复需显式预览、执行。详见 [完整更新说明](docs/releases/0.10.7.md)。
 
 ## 从对话到画布
 
@@ -38,11 +47,13 @@
 
 ### 多个对话，各自操作自己的画布
 
-默认场次分组纵向、镜头每行四列，按真实横竖画幅预留空间，避免预览后重叠。明确淘汰节点可经依赖检查和快照备份后清理；应用配置会清理空的未使用输入。
+默认板块每行两组、组内 P 每行四列，横向展开后向下换行；按真实横竖画幅、每行最高节点预留空间，保持行列对齐，避免预览后重叠。明确淘汰节点可经依赖检查和快照备份后清理；应用配置会清理空的未使用输入。
 
 每个任务持有独立 `scopeId`；自动开页会固定到具体页面。其他对话选择另一张画布，不会改变当前任务的目标。页面刷新或连接失效后重新打开获取连接，同一画布的写入仍需遵守版本检查。
 
 ### 原生 AI 应用与普通模型都可配置
+
+非临时项目直接在画布内制作，**同一 P 持续复用一个原生应用节点**，每次迭代保留该节点的原生历史。稳定的 `productionKey` 帮助重复准备时找到原节点，避免每轮新增应用和结果卡。
 
 直接读取原生应用的输入字段，修改时长、比例、种子等参数，绑定图片、视频、音频或文本参考。应用节点使用专用预检和运行路径，不再要求普通模型节点的 `modelCode`。
 
@@ -108,13 +119,13 @@ rh_canvas_summary / get_node  检查已有内容
 
 | 项目 | 当前情况 |
 | --- | --- |
-| 节点历史 | 原生历史读取、按真实任务修复索引；生成完成后自动同步，断线与重启后续接 |
+| 节点历史 | 原生历史读取与自动同步；301 冲突可显式原地修复，保留真实历史、当前媒体及输入 |
 | 工具 | 83 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 0.10.3 本地 119 项通过、2 项 Windows 专用跳过；Windows 相关测试 53 项通过。完整跨平台 CI 记录见 Actions |
+| 自动测试 | 0.10.7：macOS 194 项通过、2 项 Windows 专用跳过；Windows 完整 196 项通过。跨平台 CI 记录见 Actions |
 | 免费媒体处理 | 已实测浏览器截帧、图片裁剪、保存回读，以及本地 FFmpeg 处理；付费路径已验证未授权时拒绝提交 |
 | Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
-| 远程 HTTP 接口 | 公网 OAuth 已验证（0.9.1 的 73 工具）；Gemini 英文界面、Grok Bot 均已实测状态、布局模板、目录、画布连接与摘要，支持中文指令 |
+| 远程 HTTP 接口 | 0.10.7 公网 OAuth、刷新授权、83 工具发现、画布读取和模型查询通过；Gemini / Grok 的已验证接入步骤见远程指南 |
 | 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
 | 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |
 | 中国站 | 保留地址与协议适配；本版现场验收以国际站为主 |

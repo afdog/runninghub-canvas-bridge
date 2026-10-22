@@ -37,7 +37,7 @@ test('modern stdio discovery and overlapping calls work without initialize; inva
  const discover=await request('server/discover');assert.equal(discover.result.resultType,'complete');assert.ok(discover.result.supportedVersions.includes('2026-07-28'));
  const responses=await Promise.all([request('tools/list'),...Array.from({length:4},()=>request('tools/call',{name:'rh_status',arguments:{}}))]);
  assert.equal(responses[0].result.tools.length,83);
- for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');}
+ for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');assert.equal(response.result.structuredContent.deployment.mcp.tools.count,83);assert.match(response.result.structuredContent.deployment.mcp.tools.fingerprint,/^[a-f0-9]{64}$/);assert.equal(response.result.structuredContent.deployment.mcp.needsRestart,false);}
  const invalid=await request('tools/call',{name:'rh_move_nodes',arguments:{positions:[{nodeId:'A',x:'bad',y:0}]}});assert.equal(invalid.result.isError,true);
 });
 
@@ -50,10 +50,17 @@ test('MCP handshake, typed tools, prompts and request IDs survive transport', as
   await server.connect(a);await client.connect(b);
   t.after(async()=>{await client.close();await server.close();});
   assert.match(client.getInstructions(),/Lumen/);
+  assert.match(client.getInstructions(),/Route by intent/);
+  assert.doesNotMatch(client.getInstructions(),/Always read rh_get_layout_template/);
   const {tools}=await client.listTools();
   assert.equal(tools.length,83);
   assert.equal(tools.some(t=>/eval|api_post/.test(t.name)),false);
   assert.equal(tools.find(t=>t.name==='rh_run_node').annotations.readOnlyHint,false);
+  assert.match(tools.find(t=>t.name==='rh_get_layout_template').description,/only before adding or arranging/);
+  assert.match(tools.find(t=>t.name==='rh_upload_media').description,/rh_upload_image/);
+  assert.equal(tools.find(t=>t.name==='rh_canvas_summary').inputSchema.properties.includeRevision.type,'boolean');
+  assert.equal(tools.find(t=>t.name==='rh_get_node').inputSchema.properties.nodeIds.type,'array');
+  assert.equal((await client.callTool({name:'rh_get_node',arguments:{}})).isError,true);
   const prompt='角色甲……请完整保留这句测试文本，包括停顿，只要——';
   const result=await client.callTool({name:'rh_update_params',arguments:{nodeId:'example-node',params:{prompt},dryRun:true}});
   assert.equal(result.isError,undefined);
@@ -111,4 +118,47 @@ test('generation persists its archive binding before submission and stops when r
   assert.equal(calls.length,0);
   assert.equal((await invoke({dryRun:true})).isError,undefined);
   assert.deepEqual(calls.map(c=>c.type),['canvas.runNode']);
+});
+
+test('shot preparation submits archive bindings together and keeps prepared nodes when one destination fails',async t=>{
+ const calls=[];
+ const bridge={canvasUrl:'https://www.runninghub.ai/project/canvas/test',
+  command:async(type,args)=>{calls.push({type,args});return args.dryRun?{ok:true,dryRun:true}:{ok:true,prepared:args.shots.length};},
+  request:async(path,args)=>{calls.push({path,args});return {ok:true,results:args.bindings.map((binding,index)=>({nodeId:binding.nodeId,ok:index===0,error:index===0?undefined:'LUMEN_PROJECT_UNAVAILABLE',target:binding.target}))};}};
+ const server=createMcpServer(bridge),client=new Client({name:'prepare-shots-test',version:'1'});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);
+ t.after(async()=>{await client.close();await server.close();});
+ const shot=(nodeId,project)=>({nodeId,templateNodeId:'template',title:nodeId,prompt:'look',archiveTarget:{kind:'asset',project_id:project}});
+ const dry=await client.callTool({name:'rh_prepare_shots',arguments:{shots:[shot('shot-1','project')],dryRun:true}});
+ assert.equal(dry.isError,undefined);assert.deepEqual(calls.map(c=>c.type),[ 'canvas.prepareShots' ]);
+ calls.length=0;
+ const prepared=await client.callTool({name:'rh_prepare_shots',arguments:{shots:[shot('shot-1','project'),shot('shot-2','missing')]}});
+ assert.equal(prepared.isError,true);
+ assert.equal(prepared.structuredContent.canvasPrepared,true);
+ assert.equal(prepared.structuredContent.prepared,2);
+ assert.deepEqual(calls.map(c=>c.type||c.path),['canvas.prepareShots','/archives/bindings']);
+ assert.deepEqual(calls[1].args.bindings.map(binding=>binding.nodeId),['shot-1','shot-2']);
+ assert.deepEqual(prepared.structuredContent.archiveBindings.map(binding=>({nodeId:binding.nodeId,ok:binding.ok})),[{nodeId:'shot-1',ok:true},{nodeId:'shot-2',ok:false}]);
+});
+
+
+test('MCP transports stable P identity and group-row options without creating another tool or submitting generation',async t=>{
+ const calls=[];const server=createMcpServer({command:async(type,args)=>{calls.push({type,args});return {ok:true,result:{nodeId:'canonical',reused:true}};},request:async(path,body)=>{calls.push({path,body});return {ok:true};}}),client=new Client({name:'production-policy',version:'1'});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);t.after(async()=>{await client.close();await server.close();});
+ assert.match(client.getInstructions(),/non-temporary RunningHub projects/);assert.match(client.getInstructions(),/one application node per P/);
+ const args={appId:'app',nodeId:'existing-P',productionKey:'EP01/P001',x:0,y:0,dryRun:true};const created=await client.callTool({name:'rh_create_app',arguments:args});assert.equal(created.isError,undefined);assert.equal(calls[0].args.productionKey,args.productionKey);
+ await client.callTool({name:'rh_configure_app',arguments:{nodeId:'existing-P',productionKey:'EP01/P001',inputs:[{nodeId:'1',fieldName:'prompt',value:'revised'}],dryRun:true}});assert.equal(calls[1].args.nodeId,'existing-P');
+ await client.callTool({name:'rh_set_layout_template',arguments:{options:{groupColumns:3,maxColumns:4}}});assert.equal(calls[2].body.options.groupColumns,3);
+ const bad=await client.callTool({name:'rh_set_layout_template',arguments:{options:{groupColumns:0}}});assert.equal(bad.isError,true);assert.equal(calls.length,3);assert.equal((await client.listTools()).tools.length,83);
+});
+
+
+test('model discovery accepts common categories and exact modes; recovery returns the original structured rejection',async t=>{
+ const calls=[],failure={ok:false,errorCode:'HISTORY_ROUTE_CONFLICT',submitted:false,submissionState:'rejected',retryable:false,platformCode:301,historyRoute:{historyId:'owned'}};
+ const server=createMcpServer({command:async(type,args)=>{calls.push({type,args});return {result:{models:[]}};},request:async()=>failure});
+ const client=new Client({name:'model-alias',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);t.after(async()=>{await client.close();await server.close();});
+ for(const types of [['video'],['VIDEO'],['image-video','text_video',' video ']])assert.notEqual((await client.callTool({name:'rh_list_models',arguments:{types}})).isError,true);
+ assert.ok(calls[0].args.types.includes('MULTIMODAL_VIDEO'));assert.ok(calls[0].args.types.includes('VIDEO_EDIT'));assert.ok(!calls[0].args.types.includes('VIDEO'));assert.deepEqual(calls[0].args.types,calls[1].args.types);assert.equal(new Set(calls[2].args.types).size,calls[2].args.types.length);
+ const n=calls.length;assert.equal((await client.callTool({name:'rh_list_models',arguments:{types:['bogus']}})).isError,true);assert.equal(calls.length,n);
+ const receipt=(await client.callTool({name:'rh_command_result',arguments:{requestId:'original-request'}})).structuredContent;assert.equal(receipt.submissionState,'rejected');assert.deepEqual(receipt.historyRoute,failure.historyRoute);assert.equal(receipt.retryable,false);
 });

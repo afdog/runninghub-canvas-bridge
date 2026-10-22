@@ -47,7 +47,15 @@ jobs:
       - name: Write release notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cat > release-notes.md <<EOF
+          if [ -f "docs/releases/${VERSION}.md" ]; then
+            cat "docs/releases/${VERSION}.md" > release-notes.md
+          else
+            printf '# RunningHub Canvas Bridge %s\n' "$VERSION" > release-notes.md
+          fi
+          cat >> release-notes.md <<EOF
+
+          ---
+
           RunningHub Canvas Bridge ${VERSION}
 
           Assets:

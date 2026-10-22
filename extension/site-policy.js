@@ -29,7 +29,7 @@
     "graph.snapshot", "canvas.exportWorkflow", "canvas.yjsSnapshot", "canvas.summary",
     "canvas.capabilities", "canvas.rollbackList", "canvas.findElements",
     "canvas.findReferenceCandidates", "canvas.describeImageNode", "canvas.suggestEmptyRegion",
-    "canvas.getElement", "canvas.inspectNodeTemplate", "canvas.inspectModelOptions",
+    "canvas.getElement", "canvas.getElements", "canvas.inspectNodeTemplate", "canvas.inspectModelOptions",
     "canvas.resolveModelAlias", "canvas.getConnections", "canvas.validateNodeRun",
     "canvas.validateVideoRun", "canvas.pollNodeResult", "canvas.pollTaskResult",
     "canvas.getDetail", "canvas.workflowList"

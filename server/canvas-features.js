@@ -7,14 +7,24 @@
   const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
     ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
   const cleanNode = node => { const { selected, dragging, ...value } = node || {}; return value; };
-  const nodeState = (snapshot, id) => ({ node:cleanNode(snapshot.nodes.find(n => n.id === id)), edges:snapshot.edges.filter(e => e.source === id || e.target === id).map(cleanNode).sort((a,b)=>String(a.id).localeCompare(String(b.id))) });
+  const INDEX=Symbol('snapshot-index');
+  const indexSnapshot=snapshot=>{
+    if(snapshot[INDEX])return snapshot;
+    const nodes=new Map(snapshot.nodes.map(n=>[n.id,n])),edges=new Map(),byNode=new Map();
+    for(const edge of snapshot.edges){edges.set(edge.id,edge);for(const id of new Set([edge.source,edge.target])){if(!byNode.has(id))byNode.set(id,[]);byNode.get(id).push(edge);}}
+    return Object.defineProperty({...snapshot},INDEX,{value:{nodes,edges,byNode}});
+  };
+  const indexedNode=(snapshot,id)=>snapshot[INDEX]?snapshot[INDEX].nodes.get(id):snapshot.nodes.find(n=>n.id===id);
+  const indexedEdge=(snapshot,id)=>snapshot[INDEX]?snapshot[INDEX].edges.get(id):snapshot.edges.find(e=>e.id===id);
+  const nodeState=(snapshot,id)=>({node:cleanNode(indexedNode(snapshot,id)),edges:(snapshot[INDEX]?snapshot[INDEX].byNode.get(id)||[]:snapshot.edges.filter(e=>e.source===id||e.target===id)).map(cleanNode).sort((a,b)=>String(a.id).localeCompare(String(b.id)))});
   const revision = async (snapshot,id) => {
     const bytes = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(nodeState(snapshot,id))));
     return Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
   };
   const checkRevisions = async (snapshot, expected = {}) => {
+    snapshot=indexSnapshot(snapshot);
     for (const [id, wanted] of Object.entries(expected)) {
-      if (!snapshot.nodes.some(n=>n.id===id) || await revision(snapshot,id) !== wanted) throw new Error(`EDIT_CONFLICT: reread node ${id}`);
+      if (!indexedNode(snapshot,id) || await revision(snapshot,id) !== wanted) throw new Error(`EDIT_CONFLICT: reread node ${id}`);
     }
   };
   const mediaUrls = (node,kind) => {
@@ -30,10 +40,24 @@
     return [...new Set(urls)].filter(u=>typeof u==='string' && /^https:\/\//.test(u));
   };
   const DEFAULT_TYPES = ['TEXT_IMAGE','IMAGE_IMAGE','TEXT_VIDEO','IMAGE_VIDEO','MULTIMODAL_VIDEO','START_END_VIDEO','START_VIDEO','VIDEO_VIDEO','VIDEO_EDIT','VIDEO_EXTEND','TEXT_AUDIO','TEXT_MUSIC','AUDIO_AUDIO','VIDEO_AUDIO','TEXT_TEXT','MULTIMODAL_TEXT','IMAGE_TEXT','VIDEO_TEXT'];
-  globalThis.RHCanvasFeatures = {revision,checkRevisions,canonical,nodeState,mediaUrls,
+  // Group aliases expand to real API modes; VIDEO itself is not a platform mode.
+  const normalizeModelTypes = types => {
+    if (types === undefined) return [...DEFAULT_TYPES];
+    if (!Array.isArray(types) || !types.length || types.length > 60) throw Error('MODEL_TYPES_INVALID: use video, image, audio, text or exact modelType values');
+    const aliases = {VIDEO:DEFAULT_TYPES.filter(t=>t.endsWith('_VIDEO') || ['VIDEO_EDIT','VIDEO_EXTEND'].includes(t)),IMAGE:DEFAULT_TYPES.filter(t=>t.endsWith('_IMAGE')),AUDIO:DEFAULT_TYPES.filter(t=>t.endsWith('_AUDIO') || t==='TEXT_MUSIC'),TEXT:DEFAULT_TYPES.filter(t=>t.endsWith('_TEXT')),ALL:DEFAULT_TYPES};
+    return [...new Set(types.flatMap(value=>{
+      if(typeof value!=='string')throw Error('MODEL_TYPES_INVALID');
+      const type=value.trim().toUpperCase().replace(/[-\s]+/g,'_');
+      if(aliases[type])return aliases[type];
+      if(!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(type) || type.length>64)throw Error('MODEL_TYPES_INVALID: use video, image, audio, text or an exact modelType from rh_list_models');
+      return [type]; // Allow new platform modes without requiring a bridge release.
+    }))];
+  };
+  globalThis.RHCanvasFeatures = {normalizeModelTypes,revision,checkRevisions,canonical,nodeState,mediaUrls,indexSnapshot,indexedNode,indexedEdge,
     create({api,withMutation,readSnapshot,toYValue,getTitle}) {
       const assets = new Map();
       const listModels = async ({types=DEFAULT_TYPES,query='',modelCode,includeSchema=false}={}) => {
+        types=normalizeModelTypes(types);
         const response = await api('/canvas/model/list',{types});
         const groups = Array.isArray(response) ? response : response?.data;
         if (!Array.isArray(groups)) throw new Error('MODEL_SCHEMA_UNSUPPORTED');

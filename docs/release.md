@@ -2,7 +2,7 @@
 
 Source and releases: https://github.com/limyum-creator/runninghub-canvas-bridge
 
-The product has two parts: the local bridge/MCP package and the Chrome extension. Both must use the same product version. Node.js 22+, ffmpeg/ffprobe and a logged-in Chrome profile are required. Lumen is optional and only needed for its archive tools.
+The product has two parts: the local bridge/MCP package and the browser extension. Both must use the same product version. Node.js 22+, ffmpeg/ffprobe and a logged-in supported browser are required. Standard Chrome/Edge and Codex built-in browser extension packages are provided. Lumen is optional and only needed for its archive tools.
 
 ## Install from source
 
@@ -21,7 +21,7 @@ Load `extension/` as an unpacked Chrome extension. Register `server/mcp.mjs` wit
 Download the `.tgz` from the matching GitHub Release:
 
 ```sh
-npm install -g ./runninghub-canvas-bridge-0.10.2.tgz
+npm install -g ./runninghub-canvas-bridge-0.10.7.tgz
 runninghub-canvas-bridge setup
 ```
 
@@ -33,7 +33,9 @@ Load the `extension.unpackedPath` returned by setup in Chrome, or extract the ma
 2. Run `npm ci`, `npm run check`, `npm test` and `npm run build`.
 3. Run `npm run release:package`, `npm pack --pack-destination dist`, then `npm run release:manifest`.
 4. Inspect the staged source and package inventory. Exclude private configuration, canvas payloads, media, credentials and `local-private/`.
-5. Push the reviewed source to this repository. Push a matching `v*` tag to run the release workflow, or attach the verified artifacts to a release manually. Use one publication path per version.
+5. Write `docs/releases/<version>.md` with user-facing changes, upgrade instructions and the checks actually completed. The tag workflow uses this file as the release body, adding package installation details.
+6. Push the reviewed source to this repository and wait for the macOS/Windows/Linux checks. Push a matching `v*` tag to run the release workflow, or attach the verified artifacts to a release manually. Use one publication path per version. With multiple remotes, always give `gh` the explicit `-R limyum-creator/runninghub-canvas-bridge` target.
+7. Read back the published release, download its seven assets, verify SHA-256 and `update.json` against the exact tarball, and check that the tag matches the reviewed commit.
 
 Release assets:
 
@@ -42,6 +44,8 @@ Release assets:
 - `runninghub-canvas-bridge-<version>.tgz`
 - `runninghub-canvas-bridge-extension-v<version>.zip`
 - `runninghub-canvas-bridge-extension-v<version>.sha256`
+- `runninghub-canvas-bridge-codex-extension-v<version>.zip`
+- `runninghub-canvas-bridge-codex-extension-v<version>.sha256`
 
 The tag workflow installs dependencies and ffmpeg, runs tests, builds the browser dependencies and packages the artifacts. It publishes a GitHub Release; it does not publish to npm.
 

@@ -1,12 +1,17 @@
+import {failureReceipt} from './command-result.mjs';
+import {ACTIVE_BUILD,inspectBuild,extensionBuild,deploymentActions} from './build-info.mjs';
+import {ResultWaiters} from './result-waiters.mjs';
 import {MediaOperations} from './media-operations.mjs';
 import {MediaConsent,mediaRoot} from './media-consent.mjs';
 import {HistorySync} from './history-sync.mjs';
+import {HistoryRouteFailures} from './history-route-failures.mjs';
+import {expireQueuedCommands} from './queue-expiry.mjs';
 import {UpdateMaintenance} from './update-maintenance.mjs';
 import {Downloads} from './downloads.mjs';
 const downloads=new Downloads();await downloads.init();
 import { LayoutStore } from './layout-store.mjs';
 const layoutStore=new LayoutStore();
-import { BrowserBroker } from './browser-broker.mjs';
+import { BrowserBroker, BrowserReceiptError } from './browser-broker.mjs';
 const browserBroker=new BrowserBroker(join(process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge'),'browser-jobs'));
 import { diagnose } from './diagnostics.mjs';
 import { BridgeClient } from './bridge-client.mjs';
@@ -46,24 +51,50 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.10.3";
+const PRODUCT_VERSION = "0.10.7";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
 const pendingCommands = new Map();
 const commandResults = new Map();
+const resultWaiters=new ResultWaiters(),browserResultWaiters=new ResultWaiters();
 const commandRecords = new Map();
-const journal=new CommandJournal(process.env.RH_COMMAND_DIR || join(process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge','archives'),'commands'));
-for(const entry of journal.load()) {commandRecords.set(entry.id,entry.record);if(entry.result) commandResults.set(entry.id,entry.result);}
+const journal=new CommandJournal(process.env.RH_COMMAND_DIR || join(process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge','archives'),'commands'),{classify:record=>SITE_POLICY.commandMode(record)});
+for(const entry of await journal.load()) {commandRecords.set(entry.id,entry.record);if(entry.result) commandResults.set(entry.id,entry.result);}
+const historyRouteFailures=new HistoryRouteFailures(commandRecords,commandResults);
 const persistCommand=id=>journal.save(id,commandRecords.get(id),commandResults.get(id));
+await journal.prune(commandRecords,commandResults);
+let pruning=false;
+const journalTimer=setInterval(async()=>{if(pruning)return;pruning=true;try{await journal.prune(commandRecords,commandResults);}catch{console.error('Receipt retention deferred: storage unavailable.');}finally{pruning=false;}},900000);journalTimer.unref();
 const historySync=new HistorySync({root:process.env.RH_HISTORY_SYNC_DIR || join(homedir(),'.runninghub-canvas-bridge','history-sync'),bridgeFactory:()=>new BridgeClient('http://127.0.0.1:'+PORT)});
 await historySync.init();
 // Recover only receipts from the version that records the intended canvas URL.
 for(const [id,record] of commandRecords)if(record.canvasUrl)await historySync.accept(record,commandResults.get(id));
 historySync.start();
+let expiringQueue=false;
+const queueExpiryTimer=setInterval(async()=>{
+  if(expiringQueue)return;expiringQueue=true;
+  try{await expireQueuedCommands({queues:pendingCommands,records:commandRecords,results:commandResults,persist:persistCommand,notify:id=>resultWaiters.notify(id)});}
+  catch{console.error('Expired queue receipt persistence deferred.');}
+  finally{expiringQueue=false;}
+},1000);queueExpiryTimer.unref();
 const clients = new Map();
 const sessions = new Map();
 const canvasMutations = new Map();
+const commandWaiters = new Map();
+const wakeCommandWaiters = (clientId) => {
+  const waiters = commandWaiters.get(clientId);
+  if (!waiters?.size) return;
+  for (const wake of [...waiters]) wake();
+};
+const wakeCanvasWaiters = (mutationKey) => {
+  for (const [clientId, queue] of pendingCommands) {
+    if (queue.some(command => {
+      const record = commandRecords.get(command.id);
+      return (record?.mutationKey || record?.canvasKey) === mutationKey;
+    })) wakeCommandWaiters(clientId);
+  }
+};
 const accessFor = input => input.sessionId ? sessions.get(input.sessionId) : ACCESS;
 const mediaOperations=new MediaOperations({downloads,bridgeFactory:context=>{const b=new BridgeClient('http://127.0.0.1:'+PORT);b.canvasUrl=context.canvasUrl;b.sessionId=context.sessionId;b.pinnedClientId=context.clientId;return b;}});
 await mediaOperations.init();
@@ -216,7 +247,7 @@ const server = http.createServer(async (req, res) => {
     }
     if(url.pathname==='/browser/update' && req.method==='GET'){
       const state=updateMaintenance.status();
-      return json(res,200,{version:PRODUCT_VERSION,reloadAllowed:state.idle&&!state.maintenance});
+      return json(res,200,{...await extensionBuild(),reloadAllowed:state.idle&&!state.maintenance});
     }
     if(url.pathname.startsWith('/browser/')){
       if(origin && !browserExtension)return json(res,403,{error:'LOCAL_CLIENT_ONLY'});
@@ -224,12 +255,16 @@ const server = http.createServer(async (req, res) => {
       if(url.pathname==='/browser/poll' && req.method==='GET'){
         const requestedWait=Number(url.searchParams.get('waitMs') ?? 18000);
         const until=Date.now()+(Number.isFinite(requestedWait)?Math.max(0,Math.min(18000,requestedWait)):18000);let job;
-        while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension',url.searchParams.get('extensionVersion'))) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
+        while(!(job=browserBroker.poll(url.searchParams.get('browserSource') || 'browser-extension',url.searchParams.get('extensionVersion'),url.searchParams.get('extensionBuild'),url.searchParams.get('instanceId'))) && Date.now()<until && !res.destroyed)await new Promise(r=>setTimeout(r,250));
         return json(res,200,job || null);
       }
       if(url.pathname==='/browser/jobs' && req.method==='POST')return json(res,200,browserBroker.enqueue(JSON.parse(await readBody(req))));
-      if(url.pathname==='/browser/result' && req.method==='POST')return json(res,200,browserBroker.complete(JSON.parse(await readBody(req))));
-      if(url.pathname==='/browser/result' && req.method==='GET')return json(res,200,browserBroker.result(url.searchParams.get('id')));
+      if(url.pathname==='/browser/result' && req.method==='POST'){
+        const input=JSON.parse(await readBody(req));
+        try{const result=browserBroker.complete(input);browserResultWaiters.notify(input.id);return json(res,200,result);}
+        catch(error){if(error instanceof BrowserReceiptError)return json(res,409,error.receipt);throw error;}
+      }
+      if(url.pathname==='/browser/result' && req.method==='GET'){const id=url.searchParams.get('id');await browserResultWaiters.wait(id,()=>{const j=browserBroker.result(id);return j.result?j:null;},{waitMs:url.searchParams.get('waitMs'),response:res});if(!res.destroyed)return json(res,200,browserBroker.result(id));return;}
     }
     if(/^\/media-approval\/[0-9a-f-]{36}$/.test(url.pathname)){
       const id=url.pathname.split('/').at(-1);
@@ -265,6 +300,7 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==='/history-sync' && req.method==='GET')return json(res,200,{jobs:historySync.status()});
     if (url.pathname === '/archives/binding' && req.method === 'GET') return json(res,200,archives.binding(url.searchParams.get('canvasUrl'),url.searchParams.get('nodeId')));
     if (url.pathname === '/archives/binding' && req.method === 'POST') return json(res,200,await archives.bind(JSON.parse(await readBody(req))));
+    if (url.pathname === '/archives/bindings' && req.method === 'POST') return json(res,200,{ok:true,results:await archives.bindMany(JSON.parse(await readBody(req)).bindings)});
     if (url.pathname === '/archives' && req.method === 'GET') return json(res,200,{ok:true,archives:archives.status(url.searchParams.get('id'))});
     if (url.pathname === '/archives' && req.method === 'POST') return json(res,200,{ok:true,archive:await archives.add(JSON.parse(await readBody(req)))});
     if (url.pathname === '/archives/retry' && req.method === 'POST') {const input=JSON.parse(await readBody(req));return json(res,200,{ok:true,archive:await archives.retry(input.archiveId,input.taskId)});}
@@ -288,7 +324,14 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/sessions") {
       const sessionId=url.searchParams.get('id');
-      return json(res,200,{sessionId,access:sessions.get(sessionId) || null});
+      const access=sessions.get(sessionId)||null;
+      let target;
+      if(access && url.searchParams.get('resolve')==='1'){
+        const {sorted,runtime}=await selectClient(access.clientId);
+        const match=sorted.find(c=>(!access.clientId||access.clientId===c.clientId)&&SITE_POLICY.parseCanvas(c.href)?.canvasId===access.canvasId&&SITE_POLICY.parseCanvas(c.href)?.origin===access.origin&&(!c.runtimeVersion||c.runtimeVersion===runtime.version));
+        if(match)target={clientId:match.clientId,canvasId:access.canvasId,canvasOrigin:access.origin};
+      }
+      return json(res,200,{sessionId,access,target});
     }
     if (req.method === "POST" && url.pathname === "/sessions") {
       const input = JSON.parse(await readBody(req));
@@ -349,12 +392,16 @@ const server = http.createServer(async (req, res) => {
       if (event.kind === "command.result" && event.commandId) {
         const record = commandRecords.get(event.commandId);
         if (!record || record.clientId !== event.clientId) return json(res, 409, { error: "UNEXPECTED_COMMAND_RESULT" });
-        commandResults.set(event.commandId, event);
-        record.state = "completed";
-        record.completedAt=Date.now();
-        persistCommand(event.commandId);
+        const next={...record,state:event.submissionState === "unknown" || ["CANVAS_WRITE_OUTCOME_UNKNOWN","COMMAND_OUTCOME_UNKNOWN"].includes(event.errorCode) ? "unknown" : "completed",completedAt:Date.now()};
+        await journal.save(event.commandId,next,event);
+        Object.assign(record,next);commandResults.set(event.commandId,event);
+        resultWaiters.notify(event.commandId);
         try{await historySync.accept(record,event);}catch{console.error('History sync queue unavailable; generation receipt retained for recovery.');}
-        if (canvasMutations.get(record.mutationKey || record.canvasKey) === event.commandId) canvasMutations.delete(record.mutationKey || record.canvasKey);
+        if (canvasMutations.get(record.mutationKey || record.canvasKey) === event.commandId) {
+          const mutationKey = record.mutationKey || record.canvasKey;
+          canvasMutations.delete(mutationKey);
+          wakeCanvasWaiters(mutationKey);
+        }
       }
       return json(res, 200, { ok: true });
     }
@@ -396,6 +443,7 @@ const server = http.createServer(async (req, res) => {
         ok: Boolean(route.selectedClientId && route.runtimeFreshness === "fresh"),
         bridgeUrl: `http://127.0.0.1:${PORT}`,
         product: PRODUCT_NAME,
+        build:ACTIVE_BUILD,
         version: PRODUCT_VERSION,
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
         runtimeUrl: `http://127.0.0.1:${PORT}/bridge-runtime.js`,
@@ -458,8 +506,10 @@ const server = http.createServer(async (req, res) => {
       command.canvasId = route.canvasId;
       command.canvasOrigin = SITE_POLICY.parseCanvas(selected.href).origin;
       delete command.access;
+      delete command.historyRouteFailure; // Only trusted, persisted receipts can set this context.
       const { clientId: ignoredClient, expiresAt: ignoredExpiry, sessionId: ignoredSession, ...identity } = command;
       const fingerprint = createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+      if(journal.isQuarantined(command.id))return json(res,409,{errorCode:'COMMAND_RECEIPT_QUARANTINED',requestId:command.id,nextAction:'Inspect quarantined receipt before retrying; do not submit a replacement.'});
       const previous = commandRecords.get(command.id);
       if (previous) {
         if (previous.fingerprint !== fingerprint) return json(res, 409, { errorCode: "REQUEST_ID_CONFLICT" });
@@ -468,60 +518,89 @@ const server = http.createServer(async (req, res) => {
       mediaOperations.authorizeCommand(command,cleanHref(selected.href));
       command.expiresAt = Date.now() + Math.min(Math.max(Number(command.queueTimeoutMs) || 30000, 1000), 60000);
       command.access = {...scope, generationEnabled:ACCESS.generationEnabled};
-      commandRecords.set(command.id, { fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || command.targetId || null, canvasUrl:cleanHref(selected.href), createdAt:Date.now(), mutationKey: SITE_POLICY.parseCanvas(selected.href).apiOrigin+"/"+SITE_POLICY.parseCanvas(selected.href).canvasId, canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
-      persistCommand(command.id);
+      commandRecords.set(command.id, { mode:SITE_POLICY.commandMode(command), fingerprint, clientId, state: "queued", type:command.type, nodeId:command.nodeId || command.targetId || null, canvasUrl:cleanHref(selected.href), createdAt:Date.now(), mutationKey: SITE_POLICY.parseCanvas(selected.href).apiOrigin+"/"+SITE_POLICY.parseCanvas(selected.href).canvasId, canvasKey: SITE_POLICY.parseCanvas(selected.href).key });
+      await persistCommand(command.id);
       const queue = pendingCommands.get(clientId) || [];
       queue.push(command);
       pendingCommands.set(clientId, queue);
+      wakeCommandWaiters(clientId);
       return json(res, 200, { ok: true, id: command.id, clientId, route });
     }
 
     if (req.method === "GET" && url.pathname === "/commands") {
       const clientId = url.searchParams.get("clientId") || "";
-      const client = clients.get(clientId);
       const href = cleanHref(url.searchParams.get("href"));
-      if (!client || !href || (origin && new URL(href).origin !== origin)) return json(res, 403, { error: "UNKNOWN_PAGE_CLIENT" });
-      client.lastSeenAt = Date.now();
-      client.href = href;
-      let commands = [];
-      const direct = pendingCommands.get(clientId);
-      if (direct?.length) {
-        commands = commands.concat(direct.splice(0));
-        pendingCommands.set(clientId, direct);
-      }
-      const polledIds=commands.map(c=>c.id);
-      commands = commands.filter(command => {
-        const record = commandRecords.get(command.id);
-        if (command.expiresAt < Date.now()) {
-          record.state = "expired";
-          commandResults.set(command.id, { ok: false, errorCode: "COMMAND_EXPIRED", commandId: command.id });
-          return false;
+      const waitMs = Math.max(0, Math.min(20000, Number(url.searchParams.get("waitMs")) || 0));
+      const until = Date.now() + waitMs;
+      const collect = async () => {
+        const client = clients.get(clientId);
+        if (!client || !href || (origin && new URL(href).origin !== origin)) return { status: 403, body: { error: "UNKNOWN_PAGE_CLIENT" } };
+        client.lastSeenAt = Date.now();
+        client.href = href;
+        let commands = [];
+        const direct = pendingCommands.get(clientId);
+        if (direct?.length) {
+          commands = commands.concat(direct.splice(0));
+          pendingCommands.set(clientId, direct);
         }
-        if (SITE_POLICY.parseCanvas(href)?.key !== record.canvasKey) {
-          record.state = 'expired';
-          commandResults.set(command.id,{ok:false,errorCode:'CANVAS_MISMATCH',commandId:command.id});
-          return false;
-        }
-        const currentScope=accessFor(command);
-        const denial=!currentScope ? 'SESSION_EXPIRED' : command.sessionId && (currentScope.canvasId!==command.canvasId || currentScope.origin!==command.canvasOrigin) ? 'SESSION_CANVAS_MISMATCH' : SITE_POLICY.authorizeCommand(command,currentScope,SITE_POLICY.parseCanvas(href));
-        if(denial) {
-          record.state='rejected';commandResults.set(command.id,{ok:false,errorCode:denial,commandId:command.id});return false;
-        }
-        command.access={...currentScope,generationEnabled:ACCESS.generationEnabled};
-        const mode = SITE_POLICY.commandMode(command);
-        if (mode === 'edit' || mode === 'generate') {
-          if (canvasMutations.has(record.mutationKey || record.canvasKey)) {
-            const queue = pendingCommands.get(clientId) || [];
-            queue.push(command); pendingCommands.set(clientId,queue);
+        const polledIds = commands.map((command) => command.id);
+        commands = commands.filter(command => {
+          const record = commandRecords.get(command.id);
+          if (command.expiresAt < Date.now()) {
+            record.state = "expired";
+            commandResults.set(command.id, { ok: false, errorCode: "COMMAND_EXPIRED", commandId: command.id });
             return false;
           }
-          canvasMutations.set(record.mutationKey || record.canvasKey,command.id);
+          if (SITE_POLICY.parseCanvas(href)?.key !== record.canvasKey) {
+            record.state = 'expired';
+            commandResults.set(command.id,{ok:false,errorCode:'CANVAS_MISMATCH',commandId:command.id});
+            return false;
+          }
+          const currentScope=accessFor(command);
+          const denial=!currentScope ? 'SESSION_EXPIRED' : command.sessionId && (currentScope.canvasId!==command.canvasId || currentScope.origin!==command.canvasOrigin) ? 'SESSION_CANVAS_MISMATCH' : SITE_POLICY.authorizeCommand(command,currentScope,SITE_POLICY.parseCanvas(href));
+          if(denial) {
+            record.state='rejected';commandResults.set(command.id,{ok:false,errorCode:denial,commandId:command.id});return false;
+          }
+          command.access={...currentScope,generationEnabled:ACCESS.generationEnabled};
+          const mode = SITE_POLICY.commandMode(command);
+          if (mode === 'edit' || mode === 'generate') {
+            if (canvasMutations.has(record.mutationKey || record.canvasKey)) {
+              const queue = pendingCommands.get(clientId) || [];
+              queue.push(command); pendingCommands.set(clientId,queue);
+              return false;
+            }
+            canvasMutations.set(record.mutationKey || record.canvasKey,command.id);
+          }
+      const routeTarget=command.nodeId || command.targetId || (command.operation==='syncNodeHistory'?command.body?.nodeId:null);
+      if(['canvas.runNode','canvas.generateVideoNode','canvas.preflight','canvas.syncNodeHistory'].includes(command.type) || command.type==='canvas.platformWrite' && command.operation==='syncNodeHistory') {
+        const site=SITE_POLICY.parseCanvas(href);
+        command.historyRouteFailure=historyRouteFailures.forNode(site.apiOrigin+'/'+site.canvasId,routeTarget);
+      }
+          record.state = "dispatched";
+          return true;
+        });
+        for (const id of polledIds) if (["dispatched","expired","rejected"].includes(commandRecords.get(id).state)) {await persistCommand(id);if(commandResults.has(id))resultWaiters.notify(id);}
+        return { status: 200, body: commands };
+      };
+      let taken;
+      const heartbeat=setInterval(()=>{const client=clients.get(clientId);if(client)client.lastSeenAt=Date.now();},4000);heartbeat.unref?.();
+      try {
+        while(true){
+          let wake;
+          const signal=new Promise(resolve=>{wake=resolve;});
+          const bucket=commandWaiters.get(clientId)||new Set();commandWaiters.set(clientId,bucket);bucket.add(wake);
+          const timer=setTimeout(wake,Math.max(0,until-Date.now()));
+          res.once('close',wake);
+          try{
+            if(res.destroyed){taken={status:499};break;}
+            taken=await collect();
+            if(taken.status!==200||taken.body.length||Date.now()>=until)break;
+            await signal;
+          }finally{clearTimeout(timer);res.off('close',wake);bucket.delete(wake);if(!bucket.size)commandWaiters.delete(clientId);}
         }
-        record.state = "dispatched";
-        return true;
-      });
-      for(const id of polledIds) if(["dispatched","expired","rejected"].includes(commandRecords.get(id).state)) persistCommand(id);
-      return json(res, 200, commands);
+      }finally{clearInterval(heartbeat);}
+      if (taken.status === 499) return;
+      return json(res, taken.status, taken.body);
     }
 
     if (req.method === 'GET' && url.pathname === '/diagnostics') {
@@ -534,13 +613,20 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/result") {
       const id = url.searchParams.get("id");
-      return json(res, 200, id ? commandResults.get(id) || null : Object.fromEntries(commandResults));
+      const value=id?await resultWaiters.wait(id,()=>commandResults.get(id)||null,{waitMs:url.searchParams.get("waitMs"),response:res}):Object.fromEntries(commandResults);
+      if(!res.destroyed)return json(res,200,value);return;
     }
 
+    if(req.method==='GET' && url.pathname==='/build-info'){
+      const [backend,expected,{runtime,sorted}]=await Promise.all([inspectBuild(),extensionBuild(),selectClient()]);
+      const value={backend,extension:{expected,observed:browserBroker.status().extensionVersions},runtime:sorted.map(c=>({clientId:c.clientId,browserSource:c.browserSource,active:c.runtimeVersion,expected:runtime.version,freshness:c.runtimeVersion===runtime.version?'fresh':c.runtimeVersion?'stale':'unknown'}))};
+      return json(res,200,{...value,nextActions:deploymentActions(value)});
+    }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, {
         ok: true,
         product: PRODUCT_NAME,
+        build:ACTIVE_BUILD,
         version: PRODUCT_VERSION,
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
         events: events.length,
@@ -549,12 +635,14 @@ const server = http.createServer(async (req, res) => {
         pendingClients: pendingCommands.size,
         activeMutations: canvasMutations.size,
         sessions: sessions.size,
+        receipts: journal.status(),
         update: updateMaintenance.status()
       });
     }
 
     return json(res, 404, { error: "not found" });
   } catch (error) {
+    const receipt=failureReceipt(error);if(receipt)return json(res,422,receipt);
     return json(res, 500, { error: error && error.stack ? error.stack : String(error) });
   }
 });

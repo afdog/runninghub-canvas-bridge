@@ -1,11 +1,25 @@
+import {assertCommandSucceeded} from './command-result.mjs';
 import {mkdir,readFile,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {mediaRoot,saveJson,hash} from './media-consent.mjs';
-import {localOperations,aiOperations,validateOperation,ffmpegPath,processLocal,nativeMediaRequest} from './media-processing.mjs';
+import {localOperations,aiOperations,validateOperation,ffmpegPath,processLocal,nativeMediaRequest,quoteFromEstimate} from './media-processing.mjs';
 import './canvas-features.js';
 const F=globalThis.RHCanvasFeatures;
-const unwrap=r=>{if(r?.ok===false)throw Error('COMMAND_OUTCOME_UNKNOWN: '+r.requestId);return r.result;};
+const unwrap=r=>assertCommandSucceeded(r).result;
+
+async function quotedModelCost(bridge,nodeId,expectedDigest,expectedNode){
+  const unknown={kind:'unknown',runningHubCredits:null,source:'canvas.price.estimate'};
+  if(typeof expectedDigest!=='string'||!/^[a-f0-9]{64}$/.test(expectedDigest))return unknown;
+  try{
+    const preview=unwrap(await bridge.command('canvas.runNode',{nodeId,dryRun:true,validateParams:true,expectedDigest,expectedNode}));
+    const request=preview?.request;
+    if(!request?.canvasId||request.targetType!=='NODE'||request.targetId!==nodeId||!request.canvas)return unknown;
+    const estimate=unwrap(await bridge.command('canvas.platformRead',{operation:'priceEstimate',body:request}));
+    return quoteFromEstimate(estimate)||unknown;
+  }catch{return unknown;}
+}
+
 export class MediaOperations {
  constructor({root=mediaRoot(),bridgeFactory,downloads,process=processLocal}){Object.assign(this,{root,bridgeFactory,downloads,process});this.jobs=new Map();this.active=new Set();this.grants=new Map();}
  async init(){await mkdir(this.root,{recursive:true});for(const file of await readdir(this.root)){if(!/^[0-9a-f-]{36}\.json$/.test(file))continue;const p=JSON.parse(await readFile(join(this.root,file),'utf8'));if(['running','submitting'].includes(p.state)){p.state='unknown';p.error='Interrupted: inspect original command/task; never resubmit automatically';await this.save(p);}this.jobs.set(p.id,p);}}
@@ -16,7 +30,12 @@ export class MediaOperations {
   this.status(id,context.canvasUrl);const p=this.jobs.get(id),b=this.bridgeFactory(context);
   if(p.commandRequestId&&!this.active.has(id)&&['unknown','submitting'].includes(p.state)){
    const event=await b.request('/result?id='+encodeURIComponent(p.commandRequestId));
-   if(event){p.receipt={requestId:p.commandRequestId,ok:event.ok,result:event.result,error:event.error};p.state=event.ok===false?'failed':p.provider==='canvas-browser'?'complete':'submitted';p.recoveredOriginalReceipt=true;await this.save(p);}
+   if(event){
+    const uncertain=event.submissionState==='unknown'||['CANVAS_WRITE_OUTCOME_UNKNOWN','COMMAND_OUTCOME_UNKNOWN'].includes(event.errorCode);
+    p.receipt={requestId:p.commandRequestId,ok:event.ok,result:event.result,error:event.error,errorCode:event.errorCode,...(uncertain?{submissionState:'unknown'}:{})};
+    p.state=uncertain?'unknown':event.ok===false?'failed':p.provider==='canvas-browser'?'complete':'submitted';
+    p.recoveredOriginalReceipt=true;await this.save(p);
+   }
   }
   if(p.state==='submitted'&&p.provider==='canvas-model'){
    const r=p.receipt?.result,taskId=r?.task?.taskId||r?.run?.task?.taskId;
@@ -27,7 +46,7 @@ export class MediaOperations {
   }
   return this.public(p);
  }
- async capabilities(){let available=false;try{await ffmpegPath();available=true;}catch{}return {local:{available,cost:'no RunningHub credits',operations:localOperations},canvasBrowser:{operations:['capture_frame','crop','resize','rotate','flip'],cost:'zero RunningHub credits; source decode and PNG upload only',limits:'16 megapixels; CORS-readable source required'},canvasMedia:{operations:['crop','trim','speed','reverse','rotate','flip'],cost:'unknown; owner consent required'},canvasModel:{operations:aiOperations,cost:'unknown; owner consent required',preparation:'Create a separate live-schema model/app node, bind source/mask and configure exact parameters before planning.'},routing:'Compare local/agent and canvas convenience, fidelity, codec, data transfer and available features. Choose deliberately. Never assume an AI model is free. Agent external local tools are also valid; preserve provenance when importing.'};}
+ async capabilities(){let available=false;try{await ffmpegPath();available=true;}catch{}return {local:{available,cost:'no RunningHub credits',operations:localOperations},canvasBrowser:{operations:['capture_frame','crop','resize','rotate','flip'],cost:'zero RunningHub credits; source decode and PNG upload only',limits:'16 megapixels; CORS-readable source required'},canvasMedia:{operations:['crop','trim','speed','reverse','rotate','flip'],cost:'unknown; owner consent required'},canvasModel:{operations:aiOperations,cost:'quoted from /canvas/price/estimate when estimatePrice is present; otherwise unknown. Owner consent is still required',preparation:'Create a separate live-schema model/app node, bind source/mask and configure exact parameters before planning.'},routing:'Compare local/agent and canvas convenience, fidelity, codec, data transfer and available features. Choose deliberately. Never assume an AI model is free. Agent external local tools are also valid; preserve provenance when importing.'};}
  async plan(input,context){
   const {sourceNodeId,sourceUrl:chosen,operation,provider,options={},processingNodeId}=input;
   if(!['local','canvas-browser','canvas-media','canvas-model'].includes(provider))throw Error('PROVIDER_REQUIRED');
@@ -56,6 +75,7 @@ export class MediaOperations {
    p.processingSnapshot=F.canonical(processing);p.processingDigest=preflight.digest;
    p.archiveTarget=(await b.request('/archives/binding?canvasUrl='+encodeURIComponent(context.canvasUrl)+'&nodeId='+encodeURIComponent(processingNodeId)))?.target||null;
    p.processingSummary={title:processing.data?.title,appName:processing.data?.aiApp?.name,outputKind:processing.type==='rh-ai'?'Application-defined':expectedKind,modelCode:processing.data?.modelCode,appId:processing.data?.aiApp?.id,params:processing.data?.params,inputs:processing.data?.aiApp?.inputNodes};
+   p.cost=await quotedModelCost(b,processingNodeId,p.processingDigest,p.processingSnapshot);
   }
   p.digest=hash(F.canonical(p));this.jobs.set(p.id,p);await this.save(p);return this.public(p);
  }

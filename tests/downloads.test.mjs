@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Downloads} from '../server/downloads.mjs';
 function wav(){const b=Buffer.alloc(1644);b.write('RIFF');b.writeUInt32LE(1636,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(8000,24);b.writeUInt32LE(16000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(1600,40);return b;}
-async function settled(d,id){for(let i=0;i<100;i++){const j=d.status(id);if(['failed','complete'].includes(j.state))return j;await new Promise(r=>setTimeout(r,20));}throw new Error('download did not finish');}
+async function settled(d,id){for(let i=0;i<100;i++){const j=d.status(id);if(['failed','complete'].includes(j.state)){await d.running.get(id);return d.status(id);}await new Promise(r=>setTimeout(r,20));}throw new Error('download did not finish');}
 test('downloads survive process recreation, verify media, deduplicate and reject unsafe attachment URLs',async t=>{
  const root=await realpath(await mkdtemp(join(tmpdir(),'rh-download-')));t.after(()=>rm(root,{recursive:true,force:true}));let count=0;
  const d=new Downloads(join(root,'jobs'),async()=>{count++;return new Response(wav(),{headers:{etag:'"one"'}});});await d.init();

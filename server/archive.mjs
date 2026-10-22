@@ -1,3 +1,4 @@
+import {assertCommandSucceeded,failureReceipt} from './command-result.mjs';
 // Persistent output collection. Only Lumen's MCP imports media; never generates or writes its database.
 import { mkdir, readFile, writeFile, rename, readdir, lstat, unlink, open } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -57,13 +58,15 @@ export async function downloadOutput(url,path,{fetcher=fetch,maxBytes=256*1024**
 }
 async function atomic(path,value) {
   const temp=path+'.tmp-'+randomUUID();
-  const fd=await open(temp,'wx',0o600);
-  try {await fd.writeFile(JSON.stringify(value,null,2)+'\n');await fd.sync();}finally{await fd.close();}
-  await rename(temp,path);
+  try {
+    const fd=await open(temp,'wx',0o600);
+    try {await fd.writeFile(JSON.stringify(value,null,2)+'\n');await fd.sync();}finally{await fd.close();}
+    await rename(temp,path);
+  } catch(error) {await unlink(temp).catch(()=>{});throw error;}
 }
 export class ArchiveManager {
   constructor({root=process.env.RH_ARCHIVE_DIR || join(homedir(),'.runninghub-canvas-bridge/archives'),lumen=withLumen,bridgeFactory=()=>new BridgeClient(),download=downloadOutput}={}) {
-    Object.assign(this,{root,lumen,bridgeFactory,download});this.jobs=new Map();this.bindings={};this.running=false;
+    Object.assign(this,{root,lumen,bridgeFactory,download});this.jobs=new Map();this.bindings={};this.bindingWrite=Promise.resolve();this.running=false;
   }
   async init() {
     await mkdir(this.root,{recursive:true,mode:0o700});
@@ -75,12 +78,47 @@ export class ArchiveManager {
   }
   async save(job) {job.updatedAt=new Date().toISOString();await atomic(join(this.root,'job-'+hash(job.archiveId)+'.json'),job);this.jobs.set(job.archiveId,job);}
   bindingKey(canvasUrl,nodeId) {const canvas=globalThis.RHCanvasSitePolicy.parseCanvas(canvasUrl);if(!canvas)throw new Error('INVALID_CANVAS_URL');return hash([canvas.key,nodeId]);}
-  async bind({canvasUrl,nodeId,target}) {
-    if(target===null) {delete this.bindings[this.bindingKey(canvasUrl,nodeId)];await atomic(join(this.root,'bindings.json'),this.bindings);return {ok:true,canvasUrl,nodeId,target:null};}
-    target=archiveTarget.parse(target);await this.lumen(call=>validateTarget(call,target));
-    this.bindings[this.bindingKey(canvasUrl,nodeId)]={canvasUrl,nodeId,target};
-    await atomic(join(this.root,'bindings.json'),this.bindings);
-    return {ok:true,canvasUrl,nodeId,target};
+  enqueueBindingWrite(task) {
+    const run=this.bindingWrite.then(task,task);
+    this.bindingWrite=run.then(()=>{},()=>{});
+    return run;
+  }
+  async bind(input) {
+    const [result]=await this.bindMany([input]);
+    if(!result.ok)throw new Error(result.error);
+    return {ok:true,canvasUrl:result.canvasUrl,nodeId:result.nodeId,target:result.target};
+  }
+  async bindMany(items) {
+    if(!Array.isArray(items)||items.length<1||items.length>100)throw new Error('ARCHIVE_BIND_BATCH');
+    const prepared=await Promise.all(items.map(async item=>{
+      try {
+        const canvasUrl=item.canvasUrl,nodeId=item.nodeId;
+        this.bindingKey(canvasUrl,nodeId);
+        if(item.target===null)return {canvasUrl,nodeId,target:null};
+        const target=archiveTarget.parse(item.target);
+        await this.lumen(call=>validateTarget(call,target));
+        return {canvasUrl,nodeId,target};
+      } catch(error) {
+        return {nodeId:item?.nodeId,error:String(error?.message||error).slice(0,500)};
+      }
+    }));
+    return this.enqueueBindingWrite(async()=>{
+      const next={...this.bindings};
+      let changed=false;
+      const results=prepared.map(item=>{
+        if(item.error)return {nodeId:item.nodeId,ok:false,error:item.error};
+        const key=this.bindingKey(item.canvasUrl,item.nodeId);
+        if(item.target===null)delete next[key];
+        else next[key]={canvasUrl:item.canvasUrl,nodeId:item.nodeId,target:item.target};
+        changed=true;
+        return {ok:true,canvasUrl:item.canvasUrl,nodeId:item.nodeId,target:item.target};
+      });
+      if(changed) {
+        await atomic(join(this.root,'bindings.json'),next);
+        this.bindings=next;
+      }
+      return results;
+    });
   }
   binding(canvasUrl,nodeId) {return this.bindings[this.bindingKey(canvasUrl,nodeId)] || null;}
   async add(raw) {
@@ -94,7 +132,7 @@ export class ArchiveManager {
     await this.save(job);return job;
   }
   status(id) {return id ? this.jobs.get(id) || null : [...this.jobs.values()].map(({archiveId,canvasUrl,nodeId,taskId,state,error,files,target,updatedAt})=>({archiveId,canvasUrl,nodeId,taskId,state,error,archived:files.filter(f=>f.receipt).length,total:files.length,target,updatedAt}));}
-  async retry(id,taskId) {const job=this.jobs.get(id);if(!job)throw new Error('ARCHIVE_NOT_FOUND');if(taskId && job.taskId && job.taskId!==taskId)throw new Error('ARCHIVE_TASK_CONFLICT');if(job.state==='complete')return job;if(taskId)job.taskId=taskId;job.state=job.taskId?'waiting_outputs':'waiting_submission';delete job.error;delete job.retryAfter;await this.save(job);return job;}
+  async retry(id,taskId) {const job=this.jobs.get(id);if(!job)throw new Error('ARCHIVE_NOT_FOUND');if(taskId && job.taskId && job.taskId!==taskId)throw new Error('ARCHIVE_TASK_CONFLICT');if(job.state==='complete')return job;if(taskId)job.taskId=taskId;job.state=job.taskId?'waiting_outputs':'waiting_submission';delete job.error;delete job.failureReceipt;delete job.retryAfter;await this.save(job);return job;}
   async step(job) {
     const bridge=this.bridgeFactory();bridge.canvasUrl=job.canvasUrl;
     if(!job.taskId) {
@@ -107,7 +145,7 @@ export class ArchiveManager {
     }
     if(!job.files.length) {
       const snapshot=await bridge.command('canvas.getElement',{elementId:job.nodeId});
-      if(snapshot.ok===false)throw new Error('CANVAS_READ_INCOMPLETE');
+      assertCommandSucceeded(snapshot);
       const selected=selectTaskOutputs(snapshot.result.element,job.taskId,job.expectedOutputs);
       if(!selected.ready)return;
       job.files=selected.outputs.map((output,index)=>({index,url:output.url,taskId:String(output.taskId),jobId:output.jobId,mediaCategory:output.mediaCategory}));
@@ -149,7 +187,7 @@ export class ArchiveManager {
         await this.save(job);
       });
     }
-    job.state='complete';delete job.error;await this.save(job);
+    job.state='complete';delete job.error;delete job.failureReceipt;await this.save(job);
   }
   async tick() {
     if(this.running)return;this.running=true;
@@ -159,6 +197,7 @@ export class ArchiveManager {
         const transient=/CANVAS_NOT_CONNECTED|fetch failed|ECONNREFUSED|AbortError|TimeoutError/.test(String(error));
         if(!transient)job.state='attention';
         job.retryAfter=transient?Date.now()+30000:null;
+        delete job.failureReceipt;const receipt=failureReceipt(error);if(receipt)job.failureReceipt=receipt;
         job.error=String(error.message).replace(/Bearer\s+\S+/gi,'Bearer [REDACTED]').slice(0,1400);await this.save(job);
       }
     }}finally{this.running=false;}

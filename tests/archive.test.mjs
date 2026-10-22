@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,writeFile,readFile,copyFile,realpath,symlink} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,writeFile,readFile,copyFile,realpath,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ArchiveManager,selectTaskOutputs,checkOutputUrl,downloadOutput} from '../server/archive.mjs';
@@ -71,4 +71,57 @@ test('all outputs are retained when Lumen cannot yet import a registered empty W
  await manager.tick();const job=manager.status('empty-work-archive');assert.equal(job.state,'attention');assert.equal(downloads,2);
  for(const file of job.files)assert.equal((await inspectMedia(file.localPath)).sha256,file.media.sha256);
  await manager.retry(job.archiveId);await manager.tick();assert.equal(downloads,2);
+});
+
+test('batch archive bindings validate together and keep every successful destination',async t=>{
+ const root=await fixture(t);
+ const canvas='https://www.runninghub.ai/project/canvas/test';
+ let started=0;let release=()=>{};const gate=new Promise(resolve=>{release=resolve;});
+ const lumen=async fn=>fn(async(name,args)=>{
+  if(name!=='lumen_read_project')throw new Error(name);
+  started++;if(started===1)await gate;
+  if(args.project_id==='missing')throw new Error('LUMEN_PROJECT_UNAVAILABLE');
+  return {project:{id:args.project_id}};
+ });
+ const manager=new ArchiveManager({root,lumen});await manager.init();
+ const target=project=>({kind:'asset',project_id:project});
+ const mixed=manager.bindMany([
+  {canvasUrl:canvas,nodeId:'kept',target:target('kept-project')},
+  {canvasUrl:canvas,nodeId:'rejected',target:target('missing')},
+ ]);
+ const first=manager.bindMany([{canvasUrl:canvas,nodeId:'first',target:target('first-project')}]);
+ await new Promise(resolve=>setImmediate(resolve));
+ const second=manager.bindMany([{canvasUrl:canvas,nodeId:'second',target:target('second-project')}]);
+ release();
+ const [mixedResults,firstResults,secondResults]=await Promise.all([mixed,first,second]);
+ assert.equal(mixedResults[0].ok,true);assert.equal(mixedResults[1].ok,false);assert.match(mixedResults[1].error,/LUMEN_PROJECT_UNAVAILABLE/);
+ assert.equal(firstResults[0].ok,true);assert.equal(secondResults[0].ok,true);
+ const reloaded=new ArchiveManager({root,lumen});await reloaded.init();
+ assert.equal(reloaded.binding(canvas,'kept').target.project_id,'kept-project');
+ assert.equal(reloaded.binding(canvas,'rejected'),null);
+ assert.equal(reloaded.binding(canvas,'first').target.project_id,'first-project');
+ assert.equal(reloaded.binding(canvas,'second').target.project_id,'second-project');
+ const removed=await reloaded.bind({canvasUrl:canvas,nodeId:'kept',target:null});
+ assert.equal(removed.target,null);assert.equal(reloaded.binding(canvas,'kept'),null);
+ await assert.rejects(reloaded.bindMany([]),/ARCHIVE_BIND_BATCH/);
+});
+
+test('failed binding writes do not alter memory or leak into a later successful batch',async t=>{
+ const root=await fixture(t),canvasUrl='https://www.runninghub.ai/project/canvas/test';
+ const manager=new ArchiveManager({root,lumen:async fn=>fn(async()=>({}))});await manager.init();
+ await manager.bind({canvasUrl,nodeId:'keep',target:{kind:'ai',title:'original'}});
+ const path=join(root,'bindings.json'),before=await readFile(path,'utf8');
+ await rm(path);await mkdir(path); // A directory at the commit destination forces rename failure on every OS.
+ await assert.rejects(manager.bindMany([
+  {canvasUrl,nodeId:'keep',target:null},
+  {canvasUrl,nodeId:'failed-new',target:{kind:'ai',title:'must not leak'}}
+ ]));
+ assert.equal(manager.binding(canvasUrl,'keep').target.title,'original');
+ assert.equal(manager.binding(canvasUrl,'failed-new'),null);
+ await rm(path,{recursive:true});await writeFile(path,before);
+ await manager.bind({canvasUrl,nodeId:'next',target:{kind:'ai',title:'valid'}});
+ const reloaded=new ArchiveManager({root});await reloaded.init();
+ assert.equal(reloaded.binding(canvasUrl,'keep').target.title,'original');
+ assert.equal(reloaded.binding(canvasUrl,'failed-new'),null);
+ assert.equal(reloaded.binding(canvasUrl,'next').target.title,'valid');
 });

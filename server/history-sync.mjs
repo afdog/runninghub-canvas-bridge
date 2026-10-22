@@ -1,3 +1,4 @@
+import {assertCommandSucceeded,failureReceipt} from './command-result.mjs';
 // Generation receipts schedule index reconciliation, never another generation.
 import {mkdir,readFile,writeFile,rename,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -18,7 +19,7 @@ export class HistorySync {
   if(this.jobs.has(id))return this.jobs.get(id);
   const job={id,canvasUrl,nodeId:record.nodeId,taskId,state:'waiting',createdAt:this.now(),attempts:0,nextAttemptAt:0};await this.save(job);return job;
  }
- status(){return [...this.jobs.values()].map(({id,canvasUrl,nodeId,taskId,state,attempts,nextAttemptAt,result,error})=>({id,canvasUrl,nodeId,taskId,state,attempts,nextAttemptAt,result,error}));}
+ status(){return [...this.jobs.values()].map(({id,canvasUrl,nodeId,taskId,state,attempts,nextAttemptAt,result,error,failureReceipt})=>({id,canvasUrl,nodeId,taskId,state,attempts,nextAttemptAt,result,error,failureReceipt}));}
  start(){if(!this.timer){this.timer=setInterval(()=>this.tick().catch(()=>{}),10000);this.timer.unref?.();}}
  stop(){clearInterval(this.timer);this.timer=null;}
  async tick(){
@@ -30,11 +31,11 @@ export class HistorySync {
     // select uses connected pages only. Background maintenance never opens/focuses a tab.
     await b.select(j.canvasUrl,true);
     const receipt=await b.command('canvas.platformWrite',{operation:'syncNodeHistory',body:{nodeId:j.nodeId,taskId:j.taskId}});
-    if(receipt.ok===false)throw Error('HISTORY_SYNC_OUTCOME_UNKNOWN: reconcile the index on the next check, never resubmit generation');
+    assertCommandSucceeded(receipt);
     const value=receipt.result?.result??receipt.result;
     if(!value || (!value.pending && !value.nodeId))throw Error('HISTORY_SYNC_RECEIPT_INVALID');
-    j.result=value;j.state=value.pending?'waiting':'complete';delete j.error;
-   }catch(e){j.state='waiting';j.error=String(e.message).slice(0,400);}
+    j.result=value;j.state=value.pending?'waiting':'complete';delete j.error;delete j.failureReceipt;
+   }catch(e){j.state='waiting';j.error=String(e.message).slice(0,400);delete j.failureReceipt;const receipt=failureReceipt(e);if(receipt)j.failureReceipt=receipt;}
    j.attempts++;j.nextAttemptAt=this.now()+(j.error?Math.min(300000,10000*2**Math.min(j.attempts,5)):15000);await this.save(j);
   }}finally{this.running=false;}
  }

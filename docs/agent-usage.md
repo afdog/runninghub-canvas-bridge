@@ -4,7 +4,23 @@ This product exposes a local bridge for Agents to operate a logged-in RunningHub
 
 For repeatable black-box acceptance testing, use `docs/agent-qa-playbook.md`.
 
-When using a release, Agents should use `runninghub-canvas-bridge ...` as the product boundary. Do not patch installed package internals when a command fails; run `runninghub-canvas-bridge doctor` and `runninghub-canvas-bridge report --write`.
+## MCP agents
+
+Codex and other MCP clients follow [AGENT_QUICKSTART.md](../AGENT_QUICKSTART.md) and the live tool descriptions. They do not have `generate-video-node` or `poll-node-result`. Validate with `rh_validate_node`, preview with `rh_run_node` `dryRun`, and submit that same request only when generation is authorized. Read results with `rh_task_status` or one `rh_node_result`. The commands below are the local CLI.
+
+## Persistent project work
+
+For non-temporary RunningHub projects, use the project canvas and native application nodes. Project trials and revisions stay in that project; use a temporary path only when explicitly requested. Keep one application node per P and configure/run that same node for each iteration. Native history owns versions; do not generate off-canvas and routinely upload every attempt as another media card.
+
+Inspect the original node first. Use a stable `productionKey` such as `EP01/P001` (no version/attempt suffix); summaries and search results expose it. `rh_create_app` reuses an exact node ID or key and returns the canonical `nodeId` with `reused: true`. Attach a key to an older app by passing its exact ID to `rh_configure_app` or `rh_create_app`. Conflicting identities/apps stop without replacement or history merging. A new independent P may create a new application; clones/workflow copies clear copied production keys and native history ownership.
+
+Read/select versions with `rh_node_history` / `rh_apply_node_history`. A rejected attempt does not discard the P application. Clean explicitly rejected standalone cards and unused inputs; deletion of a whole P or native history follows the user's specific request. Generation and spending still follow existing authorization.
+
+Layout sections in rows: `groupColumns=2` by default, then wrap downward. Each section uses `maxColumns=4` P nodes per row. Use actual portrait/landscape dimensions, aligned row tops and the tallest row member for spacing. Only request a long single-column layout explicitly; keep public asset zones separate and reuse their nodes.
+
+## Local CLI
+
+When using a release, call `runninghub-canvas-bridge ...` as the product boundary. Do not patch installed package internals when a command fails; run `runninghub-canvas-bridge doctor` and `runninghub-canvas-bridge report --write`.
 
 ## First Commands
 
@@ -33,7 +49,9 @@ If `doctor` returns `NO_PAGE_CLIENT`, run `runninghub-canvas-bridge diagnose-ext
 - Do not use `page.eval` in autonomous workflows.
 - Do not call paid generation commands unless the user has approved the spend or the task explicitly authorizes generation.
 
-## Video Generation
+## Local CLI video generation
+
+These commands exist only on the local CLI. MCP agents use the route in the section above.
 
 Preferred command:
 
@@ -115,3 +133,19 @@ Stable error codes from `agent-manifest.stableErrorCodes`:
 - `WOULD_SPEND_CREDITS`
 
 When a blocking preflight reason is present, fix that reason before sending canvas commands.
+
+### Model filters and rejected history routes
+
+`rh_list_models` and `rh_model_schema` accept categories such as `types: ["video"]`, or exact modes returned by discovery (`IMAGE_VIDEO`, `MULTIMODAL_VIDEO`). Categories expand to supported API modes; casing and hyphens are normalized.
+
+A definite `HISTORY_ROUTE_CONFLICT` has `submissionState: "rejected"` and the original request/node/index evidence. Do not change the request ID and submit again. Preflight now surfaces this known conflict. Use `rh_sync_node_history` to diagnose and synchronize only a verified replacement index. If the same index remains rejected, it returns `changed: false`, `historyRoute.blocked: true` and requires the explicit preserving repair described below. It never silently clears `historyStorage`, creates a replacement P node, borrows another node’s history, or reports an unchanged pointer as repaired. The native reset flow detaches historical routing; it requires an explicit migration decision and preservation plan.
+
+Network errors, malformed responses and missing task IDs remain `submissionState: "unknown"`. Recover the original receipt with `rh_command_result` / `rh_recover_command` and inspect platform task history before any new submission.
+
+### Preserve history while repairing a rejected route
+
+After a recorded native 301 rejection, call `rh_sync_node_history` with `repairRoute: true, dryRun: true`. The preview validates every task/node/output relationship and returns `expectedRevisions`. Apply the same repair with that revision map and a new logical request ID. This explicit repair saves a private snapshot, stores the original native batches on the same node using the site's embedded history format, and retires the invalid remote link. It does not run the node or delete remote history.
+
+`rh_node_history` keeps the server page/count unchanged and adds `preservedHistory`, `preservedHistories`, `embeddedHistory` and `combinedLocalResultCount` for recovered nodes. Select a preserved output with its original historyId/revision/outputId. Subsequent synchronization retains preserved generations when the platform creates a new remote index. `rh_delete_node_history` refuses preserved records while they form the recovery archive.
+
+Run preflight again and inspect a dry-run payload after repair. Actual generation requires the user's generation authorization. A code/schema change, a route repair and a successful paid submission are separate checks.

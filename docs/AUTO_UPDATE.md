@@ -43,6 +43,14 @@ The initial move from an older release to this updater requires a one-time insta
 
 Page runtimes already detect and load updated runtime code. Remote MCP uses the restarted gateway immediately. A stdio MCP process launched by an external client may need that client's restart/reconnect to load new code. Client-side tool-list caches may require a new conversation or refresh; updating server code does not imply every client's cache has refreshed. Canvas scopes may expire after a service restart and should be selected again by exact canvas URL. Account authorization need not be recreated for an ordinary upgrade.
 
+## Upgrading to 0.10.7
+
+Version 0.10.7 includes the 0.10.4–0.10.6 recovery, performance, P-node reuse and layout changes. Existing layout preferences remain intact; omitted `groupColumns` defaults to two groups per row. Installation does not reorganize a canvas or repair a node's history automatically. A recorded 301 history conflict uses the explicit preview/apply flow in [Agent quickstart](../AGENT_QUICKSTART.md).
+
+After updating, inspect `rh_status` / `rh_diagnose`: backend and MCP active/disk versions should match, extension fingerprints should match their installed files, and connected page runtimes should be fresh. The catalogue remains 83 tools; `rh_sync_node_history` now exposes `repairRoute`. If only the old schema appears, reconnect that MCP client or refresh its tool list while keeping existing OAuth grants.
+
+Separately managed ChatGPT tunnel runtime copies are not switched by this updater. Update that copy and its launch path using the tunnel's own deployment procedure, retaining its profile and credential references, then verify an actual plugin call. Updating the source checkout alone does not change an already-running copy elsewhere.
+
 ## Inspect, update now, or disable
 
 ```sh

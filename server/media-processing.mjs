@@ -61,6 +61,26 @@ export async function processLocal({operation,options,input,directory}){
  if(await sha256(input)!==media.sha256)throw Error('SOURCE_CHANGED_DURING_PROCESSING');
  const result=await inspectMedia(output);return {path:output,media:result,sourceSha256:media.sha256};
 }
+
+export function quoteFromEstimate(payload) {
+  const data = payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data) ? payload.data : payload;
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Object.prototype.hasOwnProperty.call(data, 'estimatePrice')) return null;
+  const raw = data.estimatePrice;
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  const text = String(raw).trim();
+  if (typeof raw === 'string' && !/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(text)) return null;
+  const amount = typeof raw === 'number' ? raw : Number(text.replace(/,/g, ''));
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const count = value => (typeof value === 'number' || typeof value === 'string' && /^\d+$/.test(value.trim())) &&
+    Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : undefined;
+  const nodeCount = count(data.nodeCount), taskCount = count(data.taskCount);
+  const counted = nodeCount !== undefined || taskCount !== undefined;
+  // A bare zero is what the site substitutes for a missing price. Do not present it as a quote.
+  if (amount === 0 && !counted) return null;
+  const currency = [data.currency, data.symbol].find(value => typeof value === 'string' && value.trim()) || null;
+  return {kind:'quoted', runningHubCredits:amount, currency, ...(Number.isFinite(nodeCount) ? {nodeCount} : {}), ...(Number.isFinite(taskCount) ? {taskCount} : {}), source:'canvas.price.estimate'};
+}
+
 export function nativeMediaRequest({canvasId,nodeId,url,operation,options,media}){
  const p=validateOperation(operation,options);
  if(!['crop','speed','reverse','rotate','flip','trim'].includes(operation))throw Error('CANVAS_MEDIA_OPERATION_UNSUPPORTED');

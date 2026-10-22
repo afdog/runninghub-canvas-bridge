@@ -61,7 +61,7 @@ test('broker protects existing tabs from old focus=true callers while preserving
   const {id}=broker.enqueue({action:'openCanvas',canvasUrl:url('123'),focus:true,...(intent?{intent}:{}),browserSource:'codex-browser'});
   const job=broker.poll('codex-browser');
   const tab={id:3,url:url('123'),status:'complete'};
-  const context={job,RHCanvasSitePolicy:globalThis.RHCanvasSitePolicy,importScripts(){},setTimeout,chrome:{
+  const context={crypto:{randomUUID:()=>"fixture"},job,RHCanvasSitePolicy:globalThis.RHCanvasSitePolicy,importScripts(){},setTimeout,chrome:{
    tabs:{query:async()=>[tab],get:async()=>tab,update:async(id,options)=>{updates.push({id,...options});return tab;},create:async options=>{created.push(options);return tab;}},
    scripting:{executeScript:async()=>[]}
   }};

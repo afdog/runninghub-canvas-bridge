@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.10.7 — 2026-10-22 — preserving native history
+
+This stable release includes the previously unpublished 0.10.4–0.10.6 changes below. See the [release summary and upgrade guide](docs/releases/0.10.7.md).
+
+- Add explicit, revision-pinned history route recovery on `rh_sync_node_history` (`repairRoute: true`). Verify every original task and output, preserve native batch/output IDs on the same node in the native embedded format, and retire the rejected remote link without generating.
+- Save a private pre-repair snapshot; keep current media, parameters, references, connections, layout and adoption unchanged. Retain the original remote records and their complete metadata.
+- Recovered-node submissions exclude the rejected link instead of silently restoring it from the history lookup. Later history sync merges genuine new results with preserved generations; original versions remain readable/selectable. Copies clear recovery ownership.
+- Verification: macOS 194 tests passed with 2 Windows-only skips; Windows passed all 196. In-place repair, cloud persistence, preflight and submission preview passed against a real affected node, retaining its existing media and history. No generation was submitted for this repair verification.
+- Public OAuth/PKCE, token refresh, 83-tool discovery, canvas reads and lowercase model filters passed against the updated Windows gateway. Existing configuration and authorization were retained on macOS and Windows.
+
+
+## 0.10.6
+
+- Expire unsent requests even when their old page connection never polls again, so reconnects do not leave tasks or updates waiting indefinitely. Dispatched requests retain their original outcome/recovery semantics.
+
+- Model discovery accepts `video`, `image`, `audio`, `text`, mixed case and hyphenated exact modes, expanding categories into real platform modes.
+- Classifies native history route rejection (301) separately from unknown generation outcomes. Structured evidence survives MCP calls, receipt recovery and service restarts. No automatic generation retry.
+- Preflight and submission consult persisted route failures. Unchanged rejected routes cannot be retried under a new request ID. Native history synchronization verifies replacement indexes; unresolved platform routes are reported explicitly while preserving current media, inputs, links, adoption and history.
+- Native history reset is deliberately not automatic: it detaches old history. A readable index alone does not establish that the platform will accept it for generation.
+
+
+## 0.10.5 — persistent P applications and section grids
+
+- Make canvas-native applications the default for non-temporary projects. Reuse the original P node for revisions and keep results in its own native history.
+- Add stable productionKey to app creation/configuration. Repeated creation returns the existing node without resetting media, inputs, history, adoption, links or geometry; conflicting identities fail. Copies clear the key. Summaries/search expose the production identity.
+- Layout template v3 arranges sections in two columns by default, with four P columns per section and vertical wrapping. Align row tops, preserve real portrait/landscape sizing, and move complete rows around obstacles.
+- Add groupColumns preferences without rewriting existing saved settings or canvas overrides. Keep reusable P apps when rejecting individual attempts; clean separate discarded cards only within explicit user scope.
+
+## 0.10.4 — recovery, concurrency and faster canvas reads
+
+- Retire permanently rejected browser receipts so workers keep accepting jobs; reconcile late durable-write receipts only with their original saved lease, without replaying operations.
+- Resolve dimensions from the currently selected media instead of unbound node-level widths/heights left by earlier outputs or history selections.
+- Include MCP-imported shared JavaScript in loaded-versus-installed build fingerprints.
+- Preserve failed/unknown command receipts through composed MCP tools and media HTTP calls, including error codes, request IDs and active scope; stop dependent edits on failed reads.
+
+- Retain command/browser request IDs when the submission response or receipt query is lost; retry receipt reads only. Browser jobs accept stable client IDs.
+- Run four independent browser workers; a slow job no longer blocks free workers. Retry lost completion receipts without executing jobs again.
+- Persist receipts asynchronously; preserve durable edit/generation and unknown receipts. Quarantine damaged command files and block reuse of their identities. Retain terminal read receipts for 24 hours, up to 2,000, with cleanup every 15 minutes.
+- Long-poll command/browser results and resolve task scope plus page routing in one lookup. Authorization and canvas mutation locking remain enforced at dispatch.
+- Page summaries before formatting and index batch node/revision lookups. Share bounded media-dimension caching across layout checks; changed URLs/outputs and a 10-minute TTL refresh dimensions.
+- Expose loaded versus installed backend/MCP builds, tool catalogue count/hash, per-extension-instance fingerprints and runtime freshness through status/diagnostics. Same-version extension fixes reload only after matching disk files and an idle bridge.
+
+
+- Keep permission/generation validation on a fixed 15-second TTL even during continuous reads.
+- Report disconnected or undrained writes as unknown, retain their original request IDs in durable receipts, and discard unconfirmed cached documents. Media status recovery preserves that uncertainty.
+- Require all native parent-linked children in layout requests. Detach planned inner groups consistently while preserving outside groups and sibling geometry.
+- Pin price previews to the frozen processing node and preflight digest; reject whitespace, malformed prices and invalid zero-price counts. Explicit counted zero quotes still require owner consent.
+- Wake all clients waiting for the same canvas mutation lock, including other tabs.
+- Commit archive bindings to disk before replacing in-memory state, so failed batches cannot leak into later writes.
+- The browser extension long-polls account jobs for 12 seconds. An older bridge that ignores `waitMs` and returns immediately still waits 1.5 seconds before asking again.
+- Submit every `rh_prepare_shots` archive binding in one request. A rejected destination is reported on that shot; the prepared canvas nodes stay in place.
+- Reuse an open writable canvas socket for later edits and reads. A local update is flushed when the socket buffer drains instead of waiting a fixed 1.2 seconds.
+- Layout converts parent-relative nodes to canvas coordinates and places them on the existing grid. Include the source groups and all children being moved; when a whole inner group is flattened, its outside parent's membership is updated without moving siblings.
+- Freeze a canvas-model media plan with the `/canvas/price/estimate` price when `estimatePrice` is present. A missing or bare-zero response stays an unknown cost and still needs owner consent.
+- Route MCP instructions by read, edit, layout, generate and media. Layout rules are read only when arranging nodes, and overlapping tools name the tool to use instead.
+- Reuse one read-only Yjs session for repeated reads on the same canvas generation, and drop it before a write.
+- Long-poll `/commands` so an open page does not wait out a fixed 700ms gap. Older servers that ignore `waitMs` still back off.
+- `rh_canvas_summary` can filter by type, status and group, continue with `offset` / `nextOffset`, and include size plus revision.
+- `rh_get_node` accepts `nodeIds` and reads that batch in one sync.
+
+
 ## 0.10.3 — layout geometry and explicit canvas cleanup
 
 - Wrap shots/assets into four-column grids by default; reject accidental long columns unless explicitly requested.

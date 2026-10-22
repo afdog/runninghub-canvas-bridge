@@ -30,7 +30,8 @@ test('Windows Script Host launches Node from Unicode paths without a console',{s
 test('Windows service installs, restarts and uninstalls in an isolated user directory',{skip:process.platform!=='win32',timeout:60000},async()=>{
   const {windowsService}=await import('../scripts/windows-service.mjs');
   const home=await mkdtemp(join(tmpdir(),'rh-service-用户 '));
-  const options={home,env:{...process.env,APPDATA:join(home,'AppData','Roaming'),RH_ARCHIVE_DIR:join(home,'archives'),RH_BRIDGE_ALLOW_GENERATION:'0'}};
+  const {createServer}=await import('node:net');const reservation=createServer();await new Promise(r=>reservation.listen(0,'127.0.0.1',r));const port=reservation.address().port;await new Promise(r=>reservation.close(r));
+  const options={home,port,env:{...process.env,APPDATA:join(home,'AppData','Roaming'),RH_ARCHIVE_DIR:join(home,'archives'),RH_BRIDGE_ALLOW_GENERATION:'0'}};
   try {
     const installed=await windowsService('install',options);assert.equal(installed.ok,true);assert.equal(installed.installed,true);
     const originalPid=installed.pid;

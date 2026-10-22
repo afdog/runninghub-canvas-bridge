@@ -4,7 +4,7 @@
   window.__RUNNINGHUB_CANVAS_BRIDGE_BROWSER_SOURCE__ = "browser-extension";
   const BRIDGE = "http://127.0.0.1:18765";
   const LOADER_KEY = "__RUNNINGHUB_CANVAS_BRIDGE_LOADER__";
-  const LOADER_VERSION = "0.10.3";
+  const LOADER_VERSION = "0.10.7";
   const PROTOCOL_VERSION = "1";
 
   if (window[LOADER_KEY]?.loading) return;

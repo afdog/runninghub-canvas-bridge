@@ -16,11 +16,11 @@ const siteSource = await readFile(new URL("../extension/site-policy.js", import.
 const runtimeSource = (await readFile(new URL("../server/bridge-runtime.js", import.meta.url), "utf8"))
   .replace(/\r\n/g, "\n")
   .replace('import(`${BRIDGE}/vendor/yjs.js`)', "Promise.resolve(globalThis.testDependencies)")
-  .replace("  pollCommands();\n})();", "  window.testHooks = { withCanvasYjs, executeCommand, getNodeTitle };\n})();");
+  .replace("  pollCommands();\n})();", "  window.testHooks = { withCanvasYjs, executeCommand, getNodeTitle, dropReadSession };\n})();");
 
 assert.ok(runtimeSource.includes("window.testHooks ="), "Runtime test hooks must replace the live poll loop");
 
-function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture", generationEnabled = false, apiData = {}, dropResults = 0 } = {}) {
+function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture", generationEnabled = false, apiData = {}, apiReply, dropResults = 0 } = {}) {
   const remoteDoc = new Y.Doc();
   if (!emptySchema) {
     const content = new Y.Map();
@@ -31,13 +31,14 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
   class Provider {
     constructor(url, room, doc, options) {
       this.url = url; this.room = room; this.doc = doc; this.options = options;
+      this.ws = { readyState: 1, bufferedAmount: 0 };
       this.handlers = new Map(); this.messageHandlers = [() => { this.syncReply = true; }];
-      this._updateHandler = (update, origin) => { if (origin !== this) { writes.push(update); Y.applyUpdate(remoteDoc, update); } };
+      this._updateHandler = (update, origin) => { if (origin !== this && this.ws?.readyState === 1) { writes.push(update); Y.applyUpdate(remoteDoc, update); } };
       doc.on("update", this._updateHandler); providers.push(this);
     }
     on(name, callback) { this.handlers.set(name, callback); }
     connect() { Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(remoteDoc), this); this.handlers.get("sync")?.(true); }
-    destroy() { this.destroyed = true; }
+    destroy() { this.destroyed = true; this.doc.off("update", this._updateHandler); }
   }
   const token = "test." + Buffer.from(JSON.stringify({ sub: "current-user", exp: 9999999999 })).toString("base64url") + ".synthetic";
   const sandbox = {
@@ -52,6 +53,7 @@ function fixture({ emptySchema = false, allowWrites = false, canvasId = "fixture
       requests.push(String(url));
       assert.equal(options.headers.Authorization, "Bearer " + token);
       const body=options.body?JSON.parse(options.body):{};payloads.push({url:String(url),body});
+      const custom=apiReply?.(new URL(url).pathname,body);if(custom)return custom;
       const data = apiData[new URL(url).pathname] ?? (String(url).endsWith('/canvas/node-history/page')?{schemaVersion:1,canvasId,nodeId:body.nodeId,historyId:null,revision:'0',resultCount:0,totalBatchCount:0,batches:[],hasNext:false}:undefined) ?? (String(url).endsWith("/canvas/task/run") ? {taskId: "fixture-task", status: "RUNNING"} : String(url).endsWith("/canvas/getCanvasDetail")
         ? { user_id: "canvas-owner-not-the-current-user" }
         : { yjsGeneration: 5, yjsGenerationRequired: true });
@@ -78,8 +80,127 @@ test("read session uses current account, international socket and generation wit
   encoding.writeVarUint8Array(input, new Uint8Array([0]));
   p.messageHandlers[0](encoding.createEncoder(), decoding.createDecoder(encoding.toUint8Array(input)));
   assert.equal(p.syncReply, undefined);
+  assert.ok(!p.destroyed);
+  await f.sandbox.testHooks.withCanvasYjs(({ nodes }) => assert.equal(nodes.length, 0));
+  assert.equal(f.providers.length, 1);
+  assert.equal(f.requests.filter((url) => url.includes("getCanvasDetail")).length, 1);
+  f.sandbox.testHooks.dropReadSession();
   assert.equal(p.destroyed, true);
   f.remoteDoc.destroy();
+});
+
+test("summary pages revisions and filters; repeated batch reads share one sync", async () => {
+  const f = fixture({ allowWrites: true });
+  const run = async (id, type, args = {}) => {
+    await f.sandbox.testHooks.executeCommand({ id, type, ...args });
+    return f.events.find((event) => event.commandId === id);
+  };
+  await run("a", "canvas.createTextNode", { config: { id: "a", title: "A", text: "one", x: 0, y: 0 } });
+  await run("b", "canvas.createNode", { config: { id: "b", type: "rh-image", data: { title: "B", groupId: "g1", status: "finished", width: 640, height: 360 }, position: { x: 10, y: 20 } } });
+  const page = await run("summary", "canvas.summary", { compact: true, limit: 1, offset: 0, includeRevision: true });
+  assert.equal(page.ok, true, page.error);
+  assert.equal(page.result.counts.matchedNodes, 2);
+  assert.equal(page.result.nodes.length, 1);
+  assert.equal(page.result.nodes[0].id, "a");
+  assert.equal(page.result.truncated, true);
+  assert.equal(page.result.nextOffset, 1);
+  assert.match(page.result.nodes[0].revision, /^[a-f0-9]{64}$/);
+  const next = await run("next", "canvas.summary", { compact: true, limit: 1, offset: page.result.nextOffset });
+  assert.equal(next.result.nodes[0].id, "b");
+  assert.equal(next.result.truncated, false);
+  const filtered = await run("filtered", "canvas.summary", { types: ["rh-image"], groupId: "g1", limit: 10 });
+  assert.equal(filtered.result.nodes.length, 1);
+  assert.equal(filtered.result.nodes[0].groupId, "g1");
+  assert.equal(filtered.result.nodes[0].width, 640);
+  const readsBefore = f.providers.filter((provider) => provider.options.params.readOnly === "1").length;
+  const batch = await run("batch", "canvas.getElements", { elementIds: ["a", "missing"] });
+  assert.equal(batch.ok, true, batch.error);
+  assert.equal(batch.result.nodes.length, 1);
+  assert.deepEqual(batch.result.missing, ["missing"]);
+  assert.match(batch.result.nodes[0].revision, /^[a-f0-9]{64}$/);
+  await run("batch2", "canvas.getElements", { elementIds: ["a"] });
+  assert.equal(f.providers.filter((provider) => provider.options.params.readOnly === "1").length, readsBefore);
+  f.sandbox.testHooks.dropReadSession();
+  f.remoteDoc.destroy();
+});
+
+test("continuous reads revalidate generation after 15 seconds rather than extending the TTL", async t => {
+  const permission = { yjsGeneration: 5, yjsGenerationRequired: true };
+  const f = fixture({ apiData: { "/canvas/checkUserIdByCanvasId": permission } });
+  t.after(() => { f.sandbox.testHooks.dropReadSession(); f.remoteDoc.destroy(); });
+  let now = 0;
+  f.sandbox.Date = class extends Date { static now() { return now; } };
+  await f.sandbox.testHooks.withCanvasYjs(() => {});
+  permission.yjsGeneration = 6;
+  for (let i = 1; i <= 6; i++) {
+    now = i * 10000;
+    await f.sandbox.testHooks.withCanvasYjs(() => {});
+  }
+  assert.equal(f.requests.filter(url => url.endsWith("/canvas/checkUserIdByCanvasId")).length, 4);
+  assert.equal(f.providers.length, 2);
+  assert.equal(f.providers[0].destroyed, true);
+  assert.equal(f.providers[1].options.params.generation, "6");
+});
+
+test("a read-only socket is replaced before writing and writes still recheck platform locks", async t => {
+  const permission = { yjsGeneration: 5 };
+  const f = fixture({ allowWrites: true, apiData: { "/canvas/checkUserIdByCanvasId": permission } });
+  t.after(() => { f.sandbox.testHooks.dropReadSession(); f.remoteDoc.destroy(); });
+  await f.sandbox.testHooks.withCanvasYjs(() => {});
+  await f.sandbox.testHooks.executeCommand({id:"upgrade",type:"canvas.createTextNode",config:{id:"one",text:"kept"}});
+  assert.equal(f.providers[0].options.params.readOnly, "1");
+  assert.equal(f.providers[0].destroyed, true);
+  assert.equal(f.providers[1].options.params.readOnly, "0");
+  permission.canvasLocked = true;
+  await f.sandbox.testHooks.executeCommand({id:"locked",type:"canvas.updateNodeText",nodeId:"one",text:"blocked"});
+  assert.match(f.events.find(e=>e.commandId==="locked").error,/locked/);
+  assert.equal(f.remoteDoc.getMap("canvas").get("canvas_content").get("nodes").get(0).toJSON().data.text,"kept");
+});
+
+test("closed or undrained write sockets return unknown receipts and discard unconfirmed local state", async t => {
+  for (const failure of ["closed","missing","undrained"]) {
+    await t.test(failure, async t => {
+      const f=fixture({allowWrites:true});
+      t.after(()=>{f.sandbox.testHooks.dropReadSession();f.remoteDoc.destroy();});
+      await f.sandbox.testHooks.withCanvasYjs(()=>{},{write:true});
+      const p=f.providers[0];p.doc.off("update",p._updateHandler);
+      let now=0;f.sandbox.Date=class extends Date{static now(){return now;}};
+      const original=f.sandbox.setTimeout;
+      f.sandbox.setTimeout=(fn,ms)=>ms===20?original(()=>{now+=1300;fn();},1):original(fn,ms);
+      p.doc.on("update",(_update,origin)=>{
+        if(origin===p)return;
+        if(failure==="undrained")p.ws.bufferedAmount=100;
+        else {
+          if(failure==="closed")p.ws.readyState=3;else p.ws=null;
+          p.handlers.get("connection-close")?.({code:1006});
+        }
+      });
+      await f.sandbox.testHooks.executeCommand({id:"lost",type:"canvas.createTextNode",config:{id:"n",text:"not confirmed"}});
+      const receipt=f.events.find(e=>e.commandId==="lost");
+      assert.equal(receipt.ok,false);
+      assert.equal(receipt.submissionState,"unknown");
+      assert.equal(receipt.errorCode,"CANVAS_WRITE_OUTCOME_UNKNOWN");
+      assert.equal(p.destroyed,true);
+      await f.sandbox.testHooks.executeCommand({id:"read-after-lost",type:"canvas.summary"});
+      assert.equal(f.events.find(e=>e.commandId==="read-after-lost").result.counts.nodes,0);
+      assert.equal(f.writes.length,0);
+    });
+  }
+});
+
+test("a connected write waits for its pending socket buffer to drain", async t => {
+  const f=fixture({allowWrites:true});
+  t.after(()=>{f.sandbox.testHooks.dropReadSession();f.remoteDoc.destroy();});
+  await f.sandbox.testHooks.withCanvasYjs(()=>{},{write:true});
+  const p=f.providers[0];p.ws.bufferedAmount=10;
+  let completed=false;
+  const pending=f.sandbox.testHooks.executeCommand({id:"drain",type:"canvas.createTextNode",config:{id:"n",text:"kept"}}).then(()=>{completed=true;});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(completed,false);
+  p.ws.bufferedAmount=0;
+  await pending;
+  assert.equal(f.events.find(e=>e.commandId==="drain").ok,true);
+  assert.equal(f.remoteDoc.getMap("canvas").get("canvas_content").get("nodes").length,1);
 });
 
 test("schema mismatch cannot initialize or overwrite remote canvas data", async () => {
@@ -134,6 +255,23 @@ test("text edits update the visible label as well as the legacy title", async ()
   assert.equal(node.data.label, "新名");
   assert.equal(node.data.text, "保留完整对白。");
   assert.equal(f.providers.every(p => p.options.params.readOnly === "0"), true);
+  f.remoteDoc.destroy();
+});
+
+test("repeated writes reuse the open socket and flush without a fixed delay", async () => {
+  const f = fixture({ allowWrites: true });
+  let delayed = 0;
+  const original = f.sandbox.setTimeout;
+  f.sandbox.setTimeout = (fn, ms, ...args) => { if (ms === 1200) delayed += 1; return original(fn, ms, ...args); };
+  await f.sandbox.testHooks.executeCommand({ id: "create", type: "canvas.createTextNode", config: { id: "n", title: "一", text: "第一版" } });
+  await f.sandbox.testHooks.executeCommand({ id: "edit", type: "canvas.updateNodeText", nodeId: "n", text: "第二版" });
+  await f.sandbox.testHooks.executeCommand({ id: "read", type: "canvas.getElement", elementId: "n" });
+  assert.equal(f.providers.length, 1);
+  assert.equal(f.providers[0].options.params.readOnly, "0");
+  assert.ok(!f.providers[0].destroyed);
+  assert.equal(delayed, 0);
+  assert.equal(f.events.find(e => e.commandId === "read").result.element.data.text, "第二版");
+  f.sandbox.testHooks.dropReadSession();
   f.remoteDoc.destroy();
 });
 
@@ -340,6 +478,10 @@ test('AI app creation, exact inputs, preflight and dry-run do not require modelC
  await f.sandbox.testHooks.executeCommand({id:'app-run-preview',type:'canvas.runNode',nodeId:'app-node',validateParams:true,dryRun:true,expectedDigest:pre.result.digest});
  const result=f.events.find(e=>e.commandId==='app-run-preview');assert.equal(result.ok,true,result.error);assert.equal(result.result.submitted,false);assert.equal(result.result.request.canvas.nodes[0].data.aiApp.inputNodes[0].fieldValue,'完整台词，不压缩。');assert.equal(f.requests.some(r=>r.endsWith('/canvas/task/run')),false);
  const before=JSON.stringify(f.remoteDoc.toJSON());
+ const frozen=JSON.parse(before).canvas.canvas_content.nodes.find(n=>n.id==='app-node');
+ frozen.data.aiApp.inputNodes[0].fieldValue='old frozen prompt';
+ await f.sandbox.testHooks.executeCommand({id:'stale-frozen-preview',type:'canvas.runNode',nodeId:'app-node',validateParams:true,dryRun:true,expectedDigest:pre.result.digest,expectedNode:f.sandbox.RHCanvasFeatures.canonical(frozen)});
+ assert.match(f.events.find(e=>e.commandId==='stale-frozen-preview').error,/EDIT_CONFLICT: frozen processing node changed/);
  await f.sandbox.testHooks.executeCommand({id:'bad-config',type:'canvas.configureApp',nodeId:'app-node',inputs:[{nodeId:'1',fieldName:'prompt',value:'must not apply'},{nodeId:'2',fieldName:'duration',value:'100'}]});
  assert.equal(f.events.find(e=>e.commandId==='bad-config').ok,false);assert.equal(JSON.stringify(f.remoteDoc.toJSON()),before);f.remoteDoc.destroy();
 });
@@ -377,4 +519,62 @@ test('wrapped layout dispatch preserves content and cleanup is revision-pinned w
  const before={nodes:f.nodes(),edges:f.edges()},entries=[{nodeId:'a',reason:'user_rejected',decisionNote:'Fixture discard'}];
  const result=await f.run('canvas.cleanupNodes',{entries,expected:before});assert.equal(result.ok,true,result.error);assert.ok(result.result.rollbackId);assert.equal(f.nodes().some(n=>n.id==='a'),false);assert.equal(f.nodes().find(n=>n.id==='group').data.nodeIds.includes('a'),false);
  const stale=await f.run('canvas.cleanupNodes',{entries,expected:before});assert.equal(stale.ok,false);assert.match(stale.error,/EDIT_CONFLICT/);assert.equal(f.requests.some(u=>u.endsWith('/task/run')),false);
+});
+
+
+test('runtime reuses a P app and its native history through configuration, summary and a generation preview',async t=>{
+ const f=fixture({allowWrites:true,generationEnabled:true,apiData:{'/canvas/node-history/page':{schemaVersion:1,canvasId:'fixture',nodeId:'p-app',historyId:'own-index',revision:'2',resultCount:2,totalBatchCount:2,batches:[],hasNext:false}}});t.after(()=>f.remoteDoc.destroy());
+ let i=0;const run=async(type,args)=>{const id='reuse-test-'+i++;await f.sandbox.testHooks.executeCommand({id,type,...args});const r=f.events.find(e=>e.commandId===id);assert.equal(r.ok,true,r.error);return r.result;};
+ const data={title:'P001',bridgeProductionKey:'EP01/P001',aiApp:{id:'app',inputNodes:[{nodeId:'1',fieldName:'prompt',fieldType:'STRING',fieldValue:'initial'}]},historyStorage:{source:'remote',historyId:'own-index',revision:'2',resultCount:2},output:[{url:'https://example.test/current.mp4'}],adopted:true};
+ await run('canvas.createNode',{config:{id:'p-app',type:'rh-ai',data}});const snapshot=()=>f.remoteDoc.getMap('canvas').get('canvas_content').toJSON(),before=snapshot();
+ const reused=await run('canvas.createApp',{appId:'app',nodeId:'new-attempt',productionKey:'EP01/P001',x:0,y:0});assert.equal(reused.result.nodeId,'p-app');assert.equal(reused.result.reused,true);assert.deepEqual(snapshot(),before);
+ await run('canvas.configureApp',{nodeId:'p-app',inputs:[{nodeId:'1',fieldName:'prompt',value:'revised'}]});const current=snapshot().nodes[0];assert.deepEqual(current.data.historyStorage,data.historyStorage);assert.deepEqual(current.data.output,data.output);assert.equal(current.data.adopted,true);
+ const summary=await run('canvas.summary',{});assert.equal(summary.nodes[0].productionKey,'EP01/P001');assert.equal(summary.nodes[0].appId,'app');const found=await run('canvas.findElements',{query:{text:'EP01/P001',summary:true}});assert.equal(found.nodes[0].id,'p-app');
+ const pre=await run('canvas.preflight',{nodeId:'p-app'});const generated=await run('canvas.runNode',{nodeId:'p-app',validateParams:true,dryRun:true,expectedDigest:pre.digest});assert.equal(generated.submitted,false);assert.equal(generated.request.canvas.nodes[0].id,'p-app');assert.equal(generated.request.canvas.nodes[0].data.historyStorage.historyId,'own-index');assert.equal(snapshot().nodes.length,1);assert.equal(f.requests.some(u=>u.endsWith('/canvas/task/run')),false);
+});
+
+
+test('301 history routing rejection is structured; rejected receipts block unchanged new requests without writes or reruns',async t=>{
+ const history={schemaVersion:1,canvasId:'fixture',nodeId:'app',historyId:'owned-index',revision:'0',resultCount:1,totalBatchCount:1,batches:[],hasNext:false};
+ const f=fixture({allowWrites:true,generationEnabled:true,apiData:{'/canvas/node-history/page':history},apiReply:path=>path==='/canvas/task/run'?{ok:true,status:200,text:async()=>JSON.stringify({code:301,msg:'节点历史路由不属于当前画布'})}:null});t.after(()=>f.remoteDoc.destroy());
+ const run=async(id,type,args={})=>{await f.sandbox.testHooks.executeCommand({id,type,...args});return f.events.find(e=>e.commandId===id);};
+ await run('create','canvas.createNode',{config:{id:'app',type:'rh-ai',data:{aiApp:{id:'a',inputNodes:[]},historyStorage:{source:'remote',historyId:'owned-index',revision:'0',resultCount:1},output:[{url:'https://example.test/old.mp4'}],accepted:true}}});
+ const before=JSON.stringify(f.remoteDoc.toJSON());
+ const rejected=await run('first','canvas.runNode',{nodeId:'app',validateParams:true});
+ assert.equal(rejected.errorCode,'HISTORY_ROUTE_CONFLICT');assert.equal(rejected.submissionState,'rejected');assert.equal(rejected.submitted,false);assert.equal(rejected.platformCode,301);assert.equal(rejected.historyRoute.historyId,'owned-index');
+ const historyRouteFailure={requestId:'first',...rejected.historyRoute};
+ const next=await run('second','canvas.runNode',{nodeId:'app',validateParams:true,historyRouteFailure});assert.equal(next.submissionState,'not_submitted');assert.equal(next.retryable,false);
+ const pre=await run('pre','canvas.preflight',{nodeId:'app',historyRouteFailure});assert.equal(pre.result.ok,false);assert.ok(pre.result.errors.includes('HISTORY_ROUTE_CONFLICT'));
+ const sync=await run('sync','canvas.platformWrite',{operation:'syncNodeHistory',body:{nodeId:'app'},historyRouteFailure});assert.equal(sync.result.changed,false);assert.equal(sync.result.ok,false);
+ assert.equal(f.payloads.filter(p=>p.url.endsWith('/canvas/task/run')).length,1);assert.equal(JSON.stringify(f.remoteDoc.toJSON()),before);
+ // A larger count or revision on the same rejected route does not repair its ownership.
+ history.revision='2';history.resultCount=3;
+ assert.equal((await run('third','canvas.runNode',{nodeId:'app',validateParams:true,historyRouteFailure})).submissionState,'not_submitted');
+});
+
+test('run transport errors, malformed replies and missing task IDs remain unknown and never auto-retry',async t=>{
+ for(const reply of [()=>{throw Error('network');},()=>({ok:false,status:503,text:async()=>JSON.stringify({code:301,msg:'节点历史路由不属于当前画布'})}),()=>({ok:true,status:200,text:async()=>'<html>broken</html>'}),()=>({ok:true,status:200,text:async()=>JSON.stringify({code:0,data:{}})})]){
+  const f=fixture({allowWrites:true,generationEnabled:true,apiReply:path=>path==='/canvas/task/run'?reply():null});t.after(()=>f.remoteDoc.destroy());
+  await f.sandbox.testHooks.executeCommand({id:'create',type:'canvas.createTextNode',config:{id:'n',text:'fixture'}});
+  await f.sandbox.testHooks.executeCommand({id:'run',type:'canvas.runNode',nodeId:'n'});
+  const event=f.events.find(e=>e.commandId==='run');assert.equal(event.errorCode,'COMMAND_OUTCOME_UNKNOWN');assert.equal(event.submissionState,'unknown');assert.equal(event.submitted,undefined);assert.equal(f.payloads.filter(p=>p.url.endsWith('/canvas/task/run')).length,1);
+ }
+});
+
+
+test('preserved route repair persists only history fields and a generation preview omits the rejected route without submitting',async t=>{
+ const batch={batchId:'batch',taskId:'old-task',createdAt:1,nodeConfigSnapshot:{modelCode:'app-id'},paramsSnapshot:{nodeInfoList:[]},outputs:[{outputId:'output',url:'https://example.test/old.mp4',outputType:'mp4'}]};
+ const history={schemaVersion:1,canvasId:'fixture',nodeId:'app',historyId:'bad-route',revision:'0',resultCount:1,totalBatchCount:1,batches:[batch],hasNext:false};
+ const f=fixture({allowWrites:true,generationEnabled:true,apiData:{'/canvas/node-history/page':history,'/canvas/task/batchStatus':{tasks:[{taskId:'old-task',canvasId:'fixture',status:'SUCCESS',plans:[{nodeId:'app',outputs:[{url:'https://example.test/old.mp4'}]}]}]}}});t.after(()=>f.remoteDoc.destroy());
+ const run=async(id,type,args={})=>{await f.sandbox.testHooks.executeCommand({id,type,...args});return f.events.find(e=>e.commandId===id);};
+ await run('create','canvas.createNode',{config:{id:'app',type:'rh-ai',data:{status:'finished',taskId:'old-task',aiApp:{id:'app-id',inputNodes:[]},historyStorage:{source:'remote',schemaVersion:1,historyId:'bad-route',revision:'0',resultCount:1},output:[{url:'https://example.test/old.mp4'}],adopted:true}}});
+ const historyRouteFailure={requestId:'original-rejection',historyId:'bad-route'};
+ const preview=await run('preview','canvas.platformWrite',{operation:'syncNodeHistory',body:{nodeId:'app',repairRoute:true},historyRouteFailure,dryRun:true});assert.equal(preview.ok,true,preview.error);
+ const result=await run('repair','canvas.platformWrite',{operation:'syncNodeHistory',body:{nodeId:'app',repairRoute:true},historyRouteFailure,expectedRevisions:preview.result.result.expectedRevisions});assert.equal(result.ok,true,result.error);
+ const snapshot=f.remoteDoc.getMap('canvas').get('canvas_content').toJSON();assert.equal(snapshot.nodes.length,1);assert.equal(snapshot.nodes[0].data.adopted,true);
+ const preflight=await run('preflight','canvas.preflight',{nodeId:'app',historyRouteFailure});assert.equal(preflight.result.ok,true);assert.equal(preflight.result.historyRoute.blocked,false);
+ const payload=await run('payload','canvas.runNode',{nodeId:'app',validateParams:true,dryRun:true,historyRouteFailure});assert.equal(payload.ok,true,payload.error);
+ const data=payload.result.request.canvas.nodes[0].data;assert.equal(data.historyStorage,undefined);assert.equal(data.bridgeHistoryRecovery,undefined);assert.equal(data.nodeOutputHistory[0].id,'batch');assert.equal(data.nodeOutputHistory[0].outputs[0].historyOutputId,'output');
+ assert.deepEqual(f.remoteDoc.getMap('canvas').get('canvas_content').toJSON(),snapshot);assert.equal(f.payloads.some(p=>p.url.endsWith('/canvas/task/run')),false);
+ const newFailure={requestId:'later-rejection',historyId:null};const blocked=await run('guard','canvas.runNode',{nodeId:'app',validateParams:true,dryRun:true,historyRouteFailure:newFailure});assert.equal(blocked.errorCode,'HISTORY_ROUTE_CONFLICT');
 });

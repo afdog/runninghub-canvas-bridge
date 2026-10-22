@@ -33,7 +33,10 @@
   };
 
   const errorCodeFromError = (error) => {
+    if(['HISTORY_ROUTE_CONFLICT','RUN_REJECTED','COMMAND_OUTCOME_UNKNOWN','MODEL_TYPES_INVALID'].includes(error?.code))return error.code;
     const message = String(error?.message || error || "");
+    if(message.startsWith('MODEL_TYPES_INVALID'))return 'MODEL_TYPES_INVALID';
+    if (message.startsWith("CANVAS_WRITE_OUTCOME_UNKNOWN")) return "CANVAS_WRITE_OUTCOME_UNKNOWN";
     if (/Node not found|Element not found/i.test(message)) return "NODE_NOT_FOUND";
     if (/Rendered node not found/i.test(message)) return "NO_RENDERED_NODE";
     if (/No image input accepted file/i.test(message)) return "UPLOAD_INPUT_NOT_FOUND";
@@ -155,7 +158,8 @@
       method: "POST",
       headers: authHeaders(),
       credentials: "include",
-      body: JSON.stringify(body || {})
+      body: JSON.stringify(body || {}),
+      ...(endpoint==="/canvas/task/run"?{signal:AbortSignal.timeout(20000)}:{})
     });
     const text = await response.text();
     return {
@@ -176,7 +180,7 @@
   const taskInfoFromRunResponse = (response) => {
     const body = parseJsonText(response?.text);
     return {
-      ok: Boolean(response?.ok && body?.code === 0),
+      ok: Boolean(response?.ok && body?.code != null && Number(body.code) === 0),
       httpStatus: response?.status,
       code: body?.code,
       msg: body?.msg,
@@ -207,6 +211,28 @@
 
   let activeCommandAccess = null;
   let activeCommand = null;
+  let readSession = null;
+  const dropReadSession = () => {
+    const session = readSession;
+    readSession = null;
+    if (!session) return;
+    try { session.provider.destroy(); } catch {}
+    try { session.doc.destroy(); } catch {}
+  };
+  const flushSentUpdate = (provider, socket) => new Promise((resolve, reject) => {
+    const started = Date.now();
+    const check = () => {
+      const current = provider.ws;
+      if (!current || current !== socket || current.readyState !== 1 ||
+          !Number.isFinite(current.bufferedAmount) || current.bufferedAmount < 0) {
+        reject(new Error("CANVAS_WRITE_OUTCOME_UNKNOWN: socket closed or changed before flush; inspect the original request, do not resubmit"));
+      } else if (current.bufferedAmount === 0) resolve();
+      else if (Date.now() - started >= 1200) reject(new Error("CANVAS_WRITE_OUTCOME_UNKNOWN: socket buffer did not drain; inspect the original request, do not resubmit"));
+      else setTimeout(check, 20);
+    };
+    check();
+  });
+
   const withCanvasYjs = async (fn, { write = false } = {}) => {
     const site = SITE_POLICY.parseCanvas(location.href);
     if (!site) throw new Error("Unsupported canvas URL");
@@ -216,6 +242,41 @@
     }
     const { Y, WebsocketProvider, decoding, messageYjsSyncStep1 } = await loadYjs();
     const { canvasId } = site;
+    const canvasContext = (doc, detail) => {
+      const root = doc.getMap("canvas");
+      const content = root.get("canvas_content");
+      const nodes = content?.get?.("nodes");
+      const edges = content?.get?.("edges");
+      if (!(nodes instanceof Y.Array) || !(edges instanceof Y.Array)) {
+        throw new Error("CANVAS_SCHEMA_UNSUPPORTED: missing synchronized nodes/edges; nothing was initialized");
+      }
+      return { Y, doc, root, content, nodes, edges, canvasId, detail };
+    };
+    const sessionLive = () => readSession?.canvasId === canvasId && readSession.open &&
+      readSession.provider.ws?.readyState === 1 && !readSession.provider.destroyed;
+    const remember = (doc, provider, detail, generation, writable) => {
+      readSession = { canvasId, generation, doc, provider, detail, checkedAt: Date.now(), open: true, writable };
+    };
+    const useSession = async (session, detail) => {
+      // Only an actual permission/generation lookup renews the validation TTL.
+      if (detail) { session.detail = detail; session.checkedAt = Date.now(); }
+      const socket = session.provider.ws;
+      if (write && socket?.readyState !== 1) throw new Error("CANVAS_SOCKET_NOT_OPEN: no edit was applied");
+      let sawLocalUpdate = false;
+      const onUpdate = (_update, origin) => { if (origin !== session.provider) sawLocalUpdate = true; };
+      if (write) session.doc.on("update", onUpdate);
+      try {
+        const value = await fn(canvasContext(session.doc, detail || session.detail));
+        if (write && sawLocalUpdate) await flushSentUpdate(session.provider, socket);
+        return value;
+      } catch (error) {
+        if (/CANVAS_SCHEMA_UNSUPPORTED|CANVAS_WRITE_OUTCOME_UNKNOWN/.test(String(error?.message || error))) dropReadSession();
+        throw error;
+      } finally {
+        if (write) session.doc.off("update", onUpdate);
+      }
+    };
+    if (!write && sessionLive() && Date.now() - readSession.checkedAt < 15000) return useSession(readSession);
     const token = sessionToken();
     const requestData = async (endpoint, body) => {
       const response = await fetch(new URL(endpoint, SITE_POLICY.parseCanvas(location.href).apiOrigin), {
@@ -237,6 +298,10 @@
     if (generation != null && (!Number.isSafeInteger(generation) || generation <= 0)) throw new Error("Invalid canvas generation metadata");
     if (permission.yjsGenerationRequired && generation == null) throw new Error("Missing required canvas generation");
     if (write && (permission.canvasLocked || permission.yjsDivergenceRepair?.roomWriteBlocked)) throw new Error("Canvas is locked for writes");
+    if (sessionLive() && String(readSession.generation ?? "") === String(generation ?? "") && (!write || readSession.writable)) {
+      return useSession(readSession, detail);
+    }
+    if (readSession) dropReadSession();
     const doc = new Y.Doc();
     const provider = new WebsocketProvider(site.websocketUrl, canvasId, doc, {
       connect: false, disableBc: true,
@@ -246,7 +311,7 @@
         yjsClientId: String(doc.clientID), ...(generation == null ? {} : { generation: String(generation) })
       }
     });
-    // A read must never upload a state update, including the sync-step-2 reply.
+    // A read-only socket must never upload a state update, including the sync-step-2 reply.
     if (!write) {
       doc.off("update", provider._updateHandler);
       const syncHandler = provider.messageHandlers[0];
@@ -259,28 +324,34 @@
         return syncHandler(encoder, decoder, ...args);
       };
     }
+    let synced = false;
+    let keep = false;
     try {
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Timed out waiting for canvas sync")), 12000);
-        provider.on("sync", (synced) => { if (synced) { clearTimeout(timer); resolve(); } });
+        provider.on("sync", (isSynced) => { if (isSynced) { synced = true; clearTimeout(timer); resolve(); } });
         provider.on("connection-close", (event) => {
-          if (event?.code >= 4000) { clearTimeout(timer); reject(new Error(`Canvas socket rejected (${event.code})`)); }
+          if (readSession?.provider === provider) readSession.open = false;
+          if (!synced && event?.code >= 4000) { clearTimeout(timer); reject(new Error(`Canvas socket rejected (${event.code})`)); }
         });
         provider.connect();
       });
-      const root = doc.getMap("canvas");
-      const content = root.get("canvas_content");
-      const nodes = content?.get?.("nodes");
-      const edges = content?.get?.("edges");
-      if (!(nodes instanceof Y.Array) || !(edges instanceof Y.Array)) {
-        throw new Error("CANVAS_SCHEMA_UNSUPPORTED: missing synchronized nodes/edges; nothing was initialized");
+      remember(doc, provider, detail, generation, write);
+      keep = true;
+      try {
+        return await useSession(readSession, detail);
+      } catch (error) {
+        if (String(error?.message || error).includes("CANVAS_SCHEMA_UNSUPPORTED")) {
+          dropReadSession();
+          keep = false;
+        }
+        throw error;
       }
-      const value = await fn({ Y, doc, root, content, nodes, edges, canvasId, detail });
-      if (write) await new Promise((resolve) => setTimeout(resolve, 1200));
-      return value;
     } finally {
-      provider.destroy();
-      doc.destroy();
+      if (!keep && !provider.destroyed) {
+        try { provider.destroy(); } catch {}
+        try { doc.destroy(); } catch {}
+      }
     }
   };
 
@@ -582,6 +653,10 @@
     {
       type: "canvas.getElement",
       description: "Return one node or edge by id."
+    },
+    {
+      type: "canvas.getElements",
+      description: "Return up to 100 nodes or edges, with revisions, in one canvas sync."
     },
     {
       type: "canvas.findReferenceCandidates",
@@ -905,7 +980,7 @@
     const haystack =
       kind === "edges"
         ? [element?.id, element?.type, element?.source, element?.target, element?.sourceHandle, element?.targetHandle]
-        : [element?.id, element?.type, getNodeTitle(element), getNodeText(element), element?.data?.agentNodeType, element?.data?.modelCode];
+        : [element?.id, element?.type, getNodeTitle(element), getNodeText(element), element?.data?.agentNodeType, element?.data?.modelCode, element?.data?.bridgeProductionKey];
     return haystack.some((part) => normalizeQuery(part).includes(q));
   };
 
@@ -955,6 +1030,8 @@
       position: node.position,
       zIndex: node.zIndex,
       modelCode: node.data?.modelCode,
+      appId: node.data?.aiApp?.id,
+      productionKey: node.data?.bridgeProductionKey,
       taskId: node.data?.taskId || outputs.find((item) => item.taskId)?.taskId,
       outputCount: outputs.length,
       sourceUrlCount: sourceUrls.length,
@@ -987,23 +1064,32 @@
     site: SITE_POLICY.parseCanvas(location.href)
   });
 
-  const summarizeCanvas = async ({ includeUrls = false, includeTextPreview = true, compact = true, full = false, limit, types, status, fields, textPreviewLength = 120 } = {}) =>
-    withCanvasYjs(({ nodes, edges, canvasId }) => {
+  const listArg = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const summarizeCanvas = async ({ includeUrls = false, includeTextPreview = true, compact = true, full = false, limit, offset, types, status, groupId, fields, textPreviewLength = 120, includeRevision = false } = {}) =>
+    withCanvasYjs(async ({ nodes, edges, canvasId }) => {
       const currentNodes = yArrayToJson(nodes);
       const currentEdges = yArrayToJson(edges);
-      const typeSet = types ? new Set(String(types).split(",").map((item) => item.trim()).filter(Boolean)) : null;
-      const statusSet = status ? new Set(String(status).split(",").map((item) => item.trim()).filter(Boolean)) : null;
+      const typeList = listArg(types);
+      const statusList = listArg(status);
+      const typeSet = typeList.length ? new Set(typeList) : null;
+      const statusSet = statusList.length ? new Set(statusList) : null;
+      const wantedGroup = groupId ? String(groupId) : "";
       const upstreamCounts = new Map();
       const downstreamCounts = new Map();
       for (const edge of currentEdges) {
         if (edge?.target) upstreamCounts.set(edge.target, (upstreamCounts.get(edge.target) || 0) + 1);
         if (edge?.source) downstreamCounts.set(edge.source, (downstreamCounts.get(edge.source) || 0) + 1);
       }
-      const nodeSummaries = currentNodes.filter((node) => {
+      const matchedNodes = currentNodes.filter((node) => {
         if (typeSet && !typeSet.has(String(node.type || ""))) return false;
         if (statusSet && !statusSet.has(String(node.data?.status || "unknown"))) return false;
+        if (wantedGroup && node.data?.groupId !== wantedGroup && node.parentId !== wantedGroup && node.parentNode !== wantedGroup && node.id !== wantedGroup) return false;
         return true;
-      }).map((node) => {
+      });
+      const effectiveLimit = Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Math.floor(Number(limit)) : !full && compact ? 50 : undefined;
+      const start = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0;
+      const pageNodes = effectiveLimit === undefined ? matchedNodes.slice(start) : matchedNodes.slice(start, start + effectiveLimit);
+      const limitedNodes=pageNodes.map(node=>{
         const outputs = outputUrlsFromNode(node);
         const sourceUrls = imageUrlsFromNode(node);
         const summary = {
@@ -1012,20 +1098,27 @@
           title: getNodeTitle(node),
           subType: node.data?.subType,
           modelCode: node.data?.modelCode,
+          appId: node.data?.aiApp?.id,
+          productionKey: node.data?.bridgeProductionKey,
           status: node.data?.status,
           taskId: node.data?.taskId || outputs.find((item) => item.taskId)?.taskId,
           position: node.position,
           upstream: upstreamCounts.get(node.id) || 0,
           downstream: downstreamCounts.get(node.id) || 0,
           outputCount: Array.isArray(node.data?.output) ? node.data.output.length : 0,
+          groupId: node.data?.groupId || node.parentId || node.parentNode || undefined,
+          width: Number(node.width || node.style?.width || node.data?.width) || undefined,
+          height: Number(node.height || node.style?.height || node.data?.height) || undefined,
           outputs: includeUrls ? outputs : undefined,
           sourceUrls: includeUrls ? sourceUrls : undefined,
           textPreview: includeTextPreview ? textFromNode(node).slice(0, Number(textPreviewLength) || 120) : undefined
         };
         return pickFields(summary, parseFields(fields));
       });
-      const effectiveLimit = Number.isFinite(Number(limit)) && Number(limit) >= 0 ? Number(limit) : !full && compact ? 50 : undefined;
-      const limitedNodes = effectiveLimit === undefined ? nodeSummaries : nodeSummaries.slice(0, effectiveLimit);
+      if (includeRevision) {
+        const snapshot=FEATURES.indexSnapshot({nodes:currentNodes,edges:currentEdges});
+        await Promise.all(limitedNodes.map(async(summary,i)=>{summary.revision=await FEATURES.revision(snapshot,pageNodes[i].id);}));
+      }
       const byType = {};
       const byStatus = {};
       for (const node of currentNodes) {
@@ -1036,10 +1129,11 @@
         ok: true,
         canvasId,
         compact: !full && Boolean(compact),
-        counts: { nodes: currentNodes.length, edges: currentEdges.length, byType, byStatus, matchedNodes: nodeSummaries.length, returnedNodes: limitedNodes.length },
+        counts: { nodes: currentNodes.length, edges: currentEdges.length, byType, byStatus, matchedNodes: matchedNodes.length, returnedNodes: limitedNodes.length },
         nodes: !full && Boolean(compact) && effectiveLimit === 0 ? undefined : limitedNodes,
         edges: full ? currentEdges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, type: edge.type })) : undefined,
-        truncated: effectiveLimit !== undefined && nodeSummaries.length > limitedNodes.length,
+        truncated: effectiveLimit !== undefined && start + limitedNodes.length < matchedNodes.length,
+        nextOffset: effectiveLimit !== undefined && start + limitedNodes.length < matchedNodes.length ? start + limitedNodes.length : undefined,
         nextActions: []
       };
       return result;
@@ -1161,6 +1255,26 @@
       const edge = yArrayToJson(edges).find((item) => item?.id === id);
       if (edge) return { canvasId, kind: "edge", element: edge };
       throw new Error(`Element not found: ${id}`);
+    });
+  };
+
+  const getElements = async ({ elementIds = [], nodeIds = [] } = {}) => {
+    const ids = [...new Set((elementIds?.length ? elementIds : nodeIds).map((id) => String(id || "")).filter(Boolean))];
+    if (!ids.length || ids.length > 100) throw new Error("NODE_IDS_REQUIRED");
+    return withCanvasYjs(async ({ nodes, edges, canvasId }) => {
+      const snapshot = FEATURES.indexSnapshot({ nodes: yArrayToJson(nodes), edges: yArrayToJson(edges) });
+      const found = [];
+      const missing = [];
+      for (const id of ids) {
+        const node = FEATURES.indexedNode(snapshot,id);
+        if (node) found.push({ id, kind: "node", element: node, revision: await FEATURES.revision(snapshot, id) });
+        else {
+          const edge = FEATURES.indexedEdge(snapshot,id);
+          if (edge) found.push({ id, kind: "edge", element: edge });
+          else missing.push(id);
+        }
+      }
+      return { canvasId, nodes: found, missing };
     });
   };
 
@@ -1647,17 +1761,20 @@
     return { prepared, validation, run };
   };
 
-  const runNode = async ({ nodeId, id, targetId, maxDepth = 8, maxChars = 120000, validateReferences = false, dryRun = false, validateParams = false, expectedDigest, expected } = {}) => {
+  const runNode = async ({ nodeId, id, targetId, maxDepth = 8, maxChars = 120000, validateReferences = false, dryRun = false, validateParams = false, expectedDigest, expectedNode, expected } = {}) => {
     const target = targetId || nodeId || id;
     if (!target) throw new Error("nodeId is required");
     const schemaNode=validateParams || expectedDigest || expected ? (await withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx))).nodes.find(n=>n.id===target) : null;
     const isApp=schemaNode?.type==='rh-ai';
     const fields=schemaNode && !isApp ? await featureTools.fieldsFor(schemaNode) : null;
+    let frozenInput;
     const payload = await withCanvasYjs(async ({ nodes, edges, canvasId }) => {
       const currentNodes = yArrayToJson(nodes);
       const currentEdges = yArrayToJson(edges);
+      frozenInput=FEATURES.canonical({nodes:currentNodes,edges:currentEdges});
       const targetNode = currentNodes.find((node) => node?.id === target);
       if (!targetNode) throw new Error(`Node not found: ${target}`);
+      if (expectedNode !== undefined && FEATURES.canonical(targetNode) !== expectedNode) throw new Error("EDIT_CONFLICT: frozen processing node changed");
       if(isApp){
         const checked=await globalThis.RHProductionFeatures.appPreflight({nodes:currentNodes,edges:currentEdges},target);
         if(!checked.ok)throw new Error('APP_PREFLIGHT_FAILED: '+checked.errors.join('; '));
@@ -1683,11 +1800,23 @@
         canvas: subgraph
       };
     });
+    // The journal blocks unchanged routes across page/service restarts and new request IDs.
+    // Never clear historyStorage automatically: native reset can detach existing versions.
+    const routeFailure=activeCommand?.historyRouteFailure;
     // Match native gL: resolve this exact node's remote index before submission.
     // Do not import another node's copied historyStorage or alter the live output/inputs.
     const history = await productionTools.nodeHistory({nodeId:target});
     const runData = payload.canvas.nodes.find(n=>n.id===target).data;
-    if (history.resultCount > 0) {
+    const recovery=productionTools.recoveryState(runData,payload.canvasId,target);
+    const historyRoute=productionTools.historyRouteStatus(routeFailure,history,runData.historyStorage,recovery);
+    if(historyRoute?.blocked)throw Object.assign(Error('HISTORY_ROUTE_CONFLICT: '+historyRoute.nextAction),{code:'HISTORY_ROUTE_CONFLICT',details:{submitted:false,submissionState:'not_submitted',retryable:false,historyRoute}});
+    if(historyRoute && !recovery && historyRoute.historyId!==runData.historyStorage?.historyId)throw Object.assign(Error('HISTORY_ROUTE_CONFLICT: synchronize the verified replacement native index before submission'),{code:'HISTORY_ROUTE_CONFLICT',details:{submitted:false,submissionState:'not_submitted',retryable:false,historyRoute}});
+    if(recovery){
+      // Native repair omits the bad remote route. Preserve real batches on the SAME node.
+      // Do not let a first-page lookup reattach the rejected historyId.
+      delete runData.historyStorage;
+      delete runData.bridgeHistoryRecovery;
+    } else if (history.resultCount > 0) {
       runData.historyStorage = {source:'remote',schemaVersion:1,historyId:history.historyId,revision:history.revision,resultCount:history.resultCount};
       delete runData.nodeOutputHistory;
       delete runData.selectedOutputHistoryId;
@@ -1695,11 +1824,22 @@
     } else if(runData.historyStorage?.source==='remote') {
       delete runData.historyStorage;
     }
+    await withCanvasYjs(ctx=>{
+      if(FEATURES.canonical({nodes:yArrayToJson(ctx.nodes),edges:yArrayToJson(ctx.edges)})!==frozenInput)throw Error('EDIT_CONFLICT: canvas changed while resolving history');
+    });
     if (dryRun) return { dryRun: true, submitted: false, request: payload };
-    const response = await postJson("/canvas/task/run", payload, maxChars);
+    let response;
+    const unknown=()=>Object.assign(Error('COMMAND_OUTCOME_UNKNOWN: inspect the original receipt and platform task history; do not resubmit'),{code:'COMMAND_OUTCOME_UNKNOWN',details:{submissionState:'unknown',retryable:false}});
+    try { response = await postJson("/canvas/task/run", payload, maxChars); } catch { throw unknown(); }
     const task = taskInfoFromRunResponse(response);
-    if (!task.ok) throw new Error(`RUN_REJECTED: ${task.code ?? response.status}: ${String(task.msg || "Request rejected").slice(0, 300)}`);
-    return { submitted: Boolean(task.taskId), submissionState: task.taskId ? "submitted" : "unknown", task };
+    if(task.ok && task.taskId)return {submitted:true,submissionState:'submitted',task};
+    // An HTTP/proxy error, missing body or missing task ID cannot prove rejection.
+    if(!response.ok || !Number.isFinite(Number(task.code)) || Number(task.code)===0 || task.taskId)throw unknown();
+    const routeConflict=Number(task.code)===301 && task.msg==='节点历史路由不属于当前画布';
+    throw Object.assign(Error(`RUN_REJECTED: ${task.code}: ${String(task.msg || 'Request rejected').slice(0,300)}`),{
+      code:routeConflict?'HISTORY_ROUTE_CONFLICT':'RUN_REJECTED',details:{submitted:false,submissionState:'rejected',retryable:false,platformCode:task.code,
+       ...(routeConflict?{historyRoute:{nodeId:target,historyId:runData.historyStorage?.historyId || null,revision:runData.historyStorage?.revision ?? null,platformCode:301},nextAction:'Preview rh_sync_node_history repairRoute=true to preserve native history and retire the rejected link. Do not resubmit unchanged.'}:{})}
+    });
   };
 
   const mergePlainObject = (target, patch) => {
@@ -2871,6 +3011,10 @@
           command.expectedRevisions={...command.expectedRevisions,...checked.expectedRevisions};
         }
       }
+      if(command.type==='canvas.generateVideoNode' && command.historyRouteFailure){
+        const historyRoute=await productionTools.inspectHistoryRoute({...command,nodeId:command.targetId||command.nodeId});
+        if(!historyRoute?.synchronized)throw Object.assign(Error('HISTORY_ROUTE_CONFLICT: resolve history before preparing or generating'),{code:'HISTORY_ROUTE_CONFLICT',details:{submitted:false,submissionState:'not_submitted',retryable:false,historyRoute}});
+      }
       const featureName=command.type?.replace(/^canvas\./,'');
       if (Object.hasOwn(productionTools,featureName)) {
         result=await productionTools[featureName](command);
@@ -2913,6 +3057,8 @@
         result = await suggestEmptyRegion(command);
       } else if (command.type === "canvas.getElement") {
         result = await getElement(command);
+      } else if (command.type === "canvas.getElements") {
+        result = await getElements(command);
       } else if (command.type === "canvas.inspectNodeTemplate") {
         result = await inspectNodeTemplate(command);
       } else if (command.type === "canvas.inspectModelOptions") {
@@ -3015,12 +3161,20 @@
       } else {
         throw new Error(`Unknown command type: ${command.type}`);
       }
+      if(command.type==='canvas.preflight' && command.historyRouteFailure){
+        const historyRoute=await productionTools.inspectHistoryRoute(command);
+        const needsSync=historyRoute && !historyRoute.blocked;
+        if(!historyRoute?.synchronized)result={...result,ok:false,errors:[...(result.errors||[]),needsSync?'HISTORY_ROUTE_SYNC_REQUIRED':'HISTORY_ROUTE_CONFLICT'],historyRoute};
+        else result={...result,historyRoute};
+      }
       await postEvent({ kind: "command.result", commandId: command.id, ok: true, result: safeJson(result) });
     } catch (error) {
       await postEvent({
         kind: "command.result",
         commandId: command.id,
         ok: false,
+        ...(errorCodeFromError(error) === "CANVAS_WRITE_OUTCOME_UNKNOWN" ? { submissionState: "unknown" } : {}),
+        ...safeJson(error?.details || {}),
         errorCode: errorCodeFromError(error),
         error: error && error.stack ? error.stack : String(error)
       });
@@ -3045,16 +3199,23 @@
           return;
         }
       }
-      const response = await fetch(`${BRIDGE}/commands?clientId=${encodeURIComponent(CLIENT_ID)}&href=${encodeURIComponent(location.href)}`, {
-        mode: "cors"
+      const started = Date.now();
+      const response = await fetch(`${BRIDGE}/commands?clientId=${encodeURIComponent(CLIENT_ID)}&href=${encodeURIComponent(location.href)}&waitMs=12000`, {
+        mode: "cors",
+        signal: AbortSignal.timeout(20000)
       });
+      let commands = [];
       if (response.ok) {
-        const commands = await response.json();
+        commands = await response.json();
         for (const command of commands) await executeCommand(command);
       } else if (response.status === 403) {
         // The local service may have restarted while this page stayed open.
         await postEvent({ kind: "bridge.installed", graph: summarizeGraph() });
       }
+      // Older bridges ignore waitMs and return immediately. Back off so an empty reply cannot spin.
+      const idle = Date.now() - started;
+      pollTimer = setTimeout(pollCommands, !response.ok ? 700 : commands.length || idle >= 1000 ? 0 : 700);
+      return;
     } catch {}
     pollTimer = setTimeout(pollCommands, 700);
   };
@@ -3070,6 +3231,7 @@
   const cleanupHistoryMedia=globalThis.RHHistoryMediaPreview?.install() || (()=>{});
   window.__RUNNINGHUB_CANVAS_BRIDGE_CLEANUP__ = () => {
     cleanupHistoryMedia();
+    dropReadSession();
     if (pollTimer) clearTimeout(pollTimer);
     if (originalFetch) window.fetch = originalFetch;
     if (OriginalXHR) window.XMLHttpRequest = OriginalXHR;

@@ -6,10 +6,11 @@ import '../extension/site-policy.js';
 import '../server/production-features.js';
 globalThis.location=new URL('https://www.runninghub.ai/project/canvas/canvas-a');
 const clone=structuredClone;
-const toYValue=(Y,v)=>Array.isArray(v)?new Y.Array():v&&typeof v==='object'?(()=>{const m=new Y.Map();for(const [k,x]of Object.entries(v))m.set(k,Array.isArray(x)?(()=>{const a=new Y.Array();a.push(x.map(y=>toYValue(Y,y)));return a;})():toYValue(Y,x));return m;})():v;
-function fixture({pages,alterTask,changeBeforeWrite,unavailable=[],existingHistory}={}){
+const toYValue=(Y,v)=>{if(Array.isArray(v)){const a=new Y.Array();a.push(v.map(x=>toYValue(Y,x)));return a;}if(v&&typeof v==='object'){const m=new Y.Map();for(const[k,x]of Object.entries(v))m.set(k,toYValue(Y,x));return m;}return v;};
+function fixture({pages,alterTask,changeBeforeWrite,unavailable=[],existingHistory,embedded}={}){
  const original={id:'node-a',type:'rh-video',position:{x:4,y:9},data:{taskId:'task-2',output:[{url:'https://example.com/2.mp4',taskId:'task-2'}],params:{prompt:'keep',seed:42},references:['ref'],accepted:true,nodeOutputHistory:[{id:'legacy'}],selectedOutputHistoryId:'legacy'}};
  if(existingHistory)original.data.historyStorage=existingHistory;
+ if(embedded!==undefined)original.data.nodeOutputHistory=embedded;
  const doc=new Y.Doc(),nodes=doc.getArray('nodes'),edges=doc.getArray('edges');edges.push([toYValue(Y,{id:'edge',source:'ref',target:'node-a'})]);nodes.push([toYValue(Y,original)]);
  const page={schemaVersion:1,canvasId:'canvas-a',nodeId:'node-a',historyId:'own-history',revision:'0',resultCount:2,totalBatchCount:2,pageNum:1,hasNext:false,batches:[1,2].map(i=>({batchId:'batch-'+i,taskId:'task-'+i,outputs:[{outputId:'output-'+i,url:`https://example.com/${i}.mp4`}]}))};
  const calls=[];const api=async(path,body)=>{calls.push({path,body});if(path==='/canvas/node-history/page')return clone(pages?.[body.pageNum-1]||page);if(path==='/canvas/task/batchStatus')return {tasks:body.taskIds.filter(id=>!unavailable.includes(id)).map(id=>{const task={taskId:id,canvasId:'canvas-a',status:'SUCCESS',plans:[{nodeId:'node-a',outputs:[{url:`https://example.com/${id.slice(-1)}.mp4`}]}]};alterTask?.(task);return task;})};throw Error('Unexpected API '+path);};
@@ -61,4 +62,65 @@ test('an authoritative empty native index clears the displayed count without alt
  const seed=fixture(),page={...seed.page,batches:[],resultCount:0,totalBatchCount:0,revision:'next'};seed.doc.destroy();
  const f=fixture({pages:[page],existingHistory:{source:'remote',schemaVersion:1,historyId:'own-history',revision:'0',resultCount:2}}),before=f.nodes.toJSON()[0].data.output;
  await f.tools.syncNodeHistory({nodeId:'node-a'});assert.equal(f.nodes.toJSON()[0].data.historyStorage.resultCount,0);assert.deepEqual(f.nodes.toJSON()[0].data.output,before);f.doc.destroy();
+});
+
+
+test('route diagnosis preserves unresolved history and only synchronizes a verified replacement index',async t=>{
+ const owned={source:'remote',schemaVersion:1,historyId:'own-history',revision:'0',resultCount:2};
+ for(const historyId of ['own-history',null]){
+  const f=fixture({existingHistory:owned});t.after(()=>f.doc.destroy());const before=f.nodes.toJSON();
+  const r=await f.tools.syncNodeHistory({nodeId:'node-a',historyRouteFailure:{requestId:'rejected',historyId}});
+  assert.equal(r.ok,false);assert.equal(r.changed,false);assert.equal(r.historyRoute.blocked,true);assert.deepEqual(f.nodes.toJSON(),before);
+ }
+ const f=fixture({existingHistory:{...owned,historyId:'rejected-route'}});t.after(()=>f.doc.destroy());
+ const historyRouteFailure={requestId:'rejected',historyId:'rejected-route'};
+ const before=f.nodes.toJSON();assert.equal((await f.tools.inspectHistoryRoute({nodeId:'node-a',historyRouteFailure})).synchronized,false);
+ const r=await f.tools.syncNodeHistory({nodeId:'node-a',historyRouteFailure});assert.equal(r.result.historyRoute.recovered,true);assert.equal(r.result.verifiedTasks,2);
+ const after=f.nodes.toJSON();after[0].data.historyStorage=before[0].data.historyStorage;assert.deepEqual(after,before);
+ assert.equal((await f.tools.inspectHistoryRoute({nodeId:'node-a',historyRouteFailure})).synchronized,true);assert.equal(f.calls.some(c=>c.path.endsWith('/run')),false);
+});
+
+
+test('explicit route repair preserves exact native identities and original media; preview is inert and repeated repair idempotent',async t=>{
+ const old={source:'remote',schemaVersion:1,historyId:'own-history',revision:'0',resultCount:2};
+ const f=fixture({existingHistory:old,embedded:[]});t.after(()=>f.doc.destroy());const before=f.nodes.toJSON();
+ const args={nodeId:'node-a',repairRoute:true,historyRouteFailure:{requestId:'original-rejection',historyId:'own-history'}};
+ const preview=await f.tools.syncNodeHistory({...args,dryRun:true});assert.deepEqual(f.nodes.toJSON(),before);assert.equal(preview.result.preservedResults,2);
+ await assert.rejects(f.tools.syncNodeHistory(args),/REVISION_REQUIRED/);
+ const fixed=await f.tools.syncNodeHistory({...args,expectedRevisions:preview.result.expectedRevisions});assert.equal(fixed.result.routeRepaired,true);assert.equal(fixed.result.generationTriggered,false);
+ const after=f.nodes.toJSON(),data=after[0].data;assert.equal(data.historyStorage.source,'embedded');assert.equal(data.historyStorage.historyId,undefined);assert.deepEqual(data.bridgeHistoryRecovery.original.batches,f.page.batches);
+ assert.deepEqual(data.nodeOutputHistory.map(b=>b.taskId).sort(),['task-1','task-2']);assert.deepEqual(data.nodeOutputHistory.flatMap(b=>b.outputs.map(o=>o.historyOutputId)).sort(),['output-1','output-2']);
+ data.historyStorage=before[0].data.historyStorage;data.nodeOutputHistory=before[0].data.nodeOutputHistory;delete data.bridgeHistoryRecovery;assert.deepEqual(after,before);
+ const repeat=await f.tools.syncNodeHistory({...args,expectedRevisions:preview.result.expectedRevisions});assert.equal(repeat.result.changed,false);
+ const route=await f.tools.inspectHistoryRoute(args);assert.equal(route.blocked,false);assert.equal(route.synchronized,true);assert.ok(f.calls.every(c=>!c.path.endsWith('/run')));
+});
+
+test('route repair refuses missing receipts, unverifiable tasks, damaged embedded data and concurrent edits',async t=>{
+ const own={source:'remote',schemaVersion:1,historyId:'own-history',revision:'0',resultCount:2};
+ const args={nodeId:'node-a',repairRoute:true,dryRun:true,historyRouteFailure:{requestId:'reject',historyId:'own-history'}};
+ for(const options of [{unavailable:['task-1']},{alterTask:x=>x.canvasId='other'},{embedded:[{id:'legacy'}]},{changeBeforeWrite:d=>d.set('params',toYValue(Y,{prompt:'changed'}))}]){
+  const f=fixture({existingHistory:own,embedded:[],...options});t.after(()=>f.doc.destroy());await assert.rejects(f.tools.syncNodeHistory(args),/HISTORY_|EDIT_CONFLICT/);assert.equal(f.nodes.toJSON()[0].data.bridgeHistoryRecovery,undefined);
+ }
+ const f=fixture({existingHistory:own,embedded:[]});t.after(()=>f.doc.destroy());await assert.rejects(f.tools.syncNodeHistory({...args,historyRouteFailure:null}),/RECEIPT_REQUIRED/);
+});
+
+test('later remote history cannot hide preserved generations; old outputs remain readable and selectable',async t=>{
+ const seed=fixture(),first=structuredClone(seed.page);seed.doc.destroy();const pages=[first];
+ const f=fixture({pages,embedded:[],existingHistory:{source:'remote',schemaVersion:1,historyId:first.historyId,revision:'0',resultCount:2}});t.after(()=>f.doc.destroy());
+ const args={nodeId:'node-a',repairRoute:true,historyRouteFailure:{requestId:'reject',historyId:first.historyId}};
+ const pre=await f.tools.syncNodeHistory({...args,dryRun:true});await f.tools.syncNodeHistory({...args,expectedRevisions:pre.result.expectedRevisions});
+ const batch={batchId:'batch-3',taskId:'task-3',createdAt:3,outputs:[{outputId:'output-3',url:'https://example.com/3.mp4'}]};
+ pages[0]={...first,historyId:'new-history',resultCount:1,totalBatchCount:1,batches:[batch]};
+ // Simulate a native result replacing the display pointer and removing old embedded entries.
+ f.nodes.get(0).get('data').set('historyStorage',toYValue(Y,{source:'remote',schemaVersion:1,historyId:'new-history',resultCount:1,revision:'0'}));f.nodes.get(0).get('data').set('nodeOutputHistory',toYValue(Y,[]));
+ const sync=await f.tools.syncNodeHistory({nodeId:'node-a',taskId:'task-3'});assert.equal(sync.result.preservedResults,3);assert.equal(f.nodes.toJSON()[0].data.historyStorage.source,'embedded');
+ const read=await f.tools.platformRead({operation:'nodeHistory',body:{nodeId:'node-a'}});assert.equal(read.resultCount,1);assert.equal(read.preservedHistory.resultCount,2);assert.equal(read.combinedLocalResultCount,3);
+ const batch4={batchId:'batch-4',taskId:'task-4',createdAt:4,outputs:[{outputId:'output-4',url:'https://example.com/4.mp4'}]};pages[0]={...first,historyId:'third-history',resultCount:1,totalBatchCount:1,batches:[batch4]};
+ f.nodes.get(0).get('data').set('nodeOutputHistory',toYValue(Y,[]));
+ const second=await f.tools.syncNodeHistory({nodeId:'node-a',taskId:'task-4'});assert.equal(second.result.preservedResults,4);
+ const all=await f.tools.platformRead({operation:'nodeHistory',body:{nodeId:'node-a'}});assert.equal(all.preservedHistories.length,3);assert.equal(all.embeddedHistory.length,4);
+ await f.tools.applyNodeHistory({nodeId:'node-a',historyId:'new-history',knownRevision:'0',outputId:'output-3',restoreParams:false});assert.equal(f.nodes.toJSON()[0].data.output[0].url,'https://example.com/3.mp4');
+
+ await f.tools.applyNodeHistory({nodeId:'node-a',historyId:'own-history',knownRevision:'0',outputId:'output-1',restoreParams:false});assert.equal(f.nodes.toJSON()[0].data.output[0].url,'https://example.com/1.mp4');assert.equal(f.nodes.toJSON()[0].data.accepted,true);
+ const damaged=f.nodes.get(0).get('data');damaged.set('nodeOutputHistory',toYValue(Y,[]));await assert.rejects(f.tools.inspectHistoryRoute(args),/CONTENT_MISSING/);
 });

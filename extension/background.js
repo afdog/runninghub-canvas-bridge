@@ -2,6 +2,13 @@ importScripts('site-policy.js','browser-pump.js');
 const BROWSER_SOURCE='browser-extension';
 const BASE='http://127.0.0.1:18765';
 const policy=globalThis.RHCanvasSitePolicy;
+const EXTENSION_FILES=['background.js','bridge-main.js','browser-pump.js','keepalive.js','site-policy.js'];
+const instanceId=crypto.randomUUID();
+async function readExtensionBuild(){
+ const parts=await Promise.all(EXTENSION_FILES.map(async name=>{const response=await fetch(chrome.runtime.getURL(name),{cache:'no-store'});if(!response.ok)throw Error('BUILD_READ_FAILED');return [name,(await response.text()).replaceAll('codex-browser',['browser','extension'].join('-'))];}));
+ return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(parts)))),n=>n.toString(16).padStart(2,'0')).join('');
+}
+const activeBuild=readExtensionBuild().catch(()=>null);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 
 async function ready(tab,createdUrl){
@@ -101,11 +108,25 @@ async function listAccountCanvases({origin,scope,teamId}){
     return {ok:true,complete:true,canvases};
   }catch{return {ok:false,error:'CANVAS_LIST_FAILED: check browser login and network'};}
 }
+async function completeBrowserJob(job,result){
+ const r=await fetch(BASE+'/browser/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:job.id,lease:job.lease,result}),signal:AbortSignal.timeout(8000)});
+ const value=await r.json();
+ if(r.ok && value?.ok===true)return value;
+ if(r.status===409 && value?.id===job.id && value?.receiptDisposition==='retired' && ['BROWSER_RECEIPT_MISMATCH','BROWSER_RESULT_INVALID'].includes(value.errorCode))return value;
+ throw Error('RECEIPT_FAILED');
+}
 const transport=createRHBrowserPump({
- poll:async()=>{const r=await fetch(BASE+'/browser/poll?waitMs=0&browserSource='+encodeURIComponent(BROWSER_SOURCE)+'&extensionVersion='+encodeURIComponent(chrome.runtime.getManifest().version),{signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('POLL_FAILED');return r.json();},
+ poll:async()=>{
+  try{
+   const r=await fetch(BASE+'/browser/poll?waitMs=12000&browserSource='+encodeURIComponent(BROWSER_SOURCE)+'&extensionVersion='+encodeURIComponent(chrome.runtime.getManifest().version)+'&extensionBuild='+encodeURIComponent(await activeBuild||'')+'&instanceId='+encodeURIComponent(instanceId),{signal:AbortSignal.timeout(20000)});
+   if(!r.ok)throw new Error('POLL_FAILED');
+   const job=await r.json();
+   return job;
+  }catch(error){throw error;}
+ },
  execute:handle,
- complete:async(job,result)=>{const r=await fetch(BASE+'/browser/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:job.id,lease:job.lease,result}),signal:AbortSignal.timeout(8000)});if(!r.ok)throw new Error('RECEIPT_FAILED');},
- schedule:(fn,ms)=>setTimeout(fn,ms),cancel:clearTimeout
+ complete:completeBrowserJob,
+ schedule:(fn,delay)=>setTimeout(fn,delay),cancel:clearTimeout
 });
 const pump=()=>transport.wake();
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
@@ -124,12 +145,12 @@ let checkingUpdate=false;
 async function checkInstalledUpdate(){
  if(checkingUpdate)return;checkingUpdate=true;
  try{
-  await transport.wake();
+  void transport.wake();
   const response=await fetch(BASE+'/browser/update',{signal:AbortSignal.timeout(4000)});
   if(!response.ok)return;const state=await response.json();
   if(!state.reloadAllowed)return;
   const disk=await (await fetch(chrome.runtime.getURL('manifest.json'),{cache:'no-store'})).json();
-  if(disk.version===state.version && disk.version!==chrome.runtime.getManifest().version){transport.stop();chrome.runtime.reload();}
+  if(disk.version===state.version && (disk.version!==chrome.runtime.getManifest().version || state.fingerprint && await activeBuild && await activeBuild!==state.fingerprint && await readExtensionBuild()===state.fingerprint)){transport.stop();chrome.runtime.reload();}
  }catch{}finally{checkingUpdate=false;}
 }
 chrome.alarms.create('bridge-installed-update',{periodInMinutes:1});

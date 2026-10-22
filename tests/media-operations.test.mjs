@@ -8,7 +8,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {MediaConsent,hash,saveJson,ownerHash} from '../server/media-consent.mjs';
 import {MediaOperations} from '../server/media-operations.mjs';
-import {processingArgs,processLocal,ffmpegPath,nativeMediaRequest} from '../server/media-processing.mjs';
+import {processingArgs,processLocal,ffmpegPath,nativeMediaRequest,quoteFromEstimate} from '../server/media-processing.mjs';
 const exec=promisify(execFile);
 async function temp(t){const p=await realpath(await mkdtemp(join(tmpdir(),'rh-media-')));t.after(()=>rm(p,{recursive:true,force:true}));return p;}
 test('local-only owner key is stable and corrupt remote configuration never silently replaces authorization',async t=>{
@@ -21,6 +21,89 @@ test('paid media requires owner secret, same-origin CSRF and unchanged unexpired
  await assert.rejects(consent.approve(id,{csrf,ownerSecret:'owner-key',consent:'yes'},csrf,'https://evil.test'),/CONSENT/);
  await consent.approve(id,{csrf,ownerSecret:'owner-key',consent:'yes'},csrf,'https://example.test');assert.equal(JSON.parse(await readFile(join(root,id+'.approval.json'),'utf8')).digest,'pinned');
  await assert.rejects(consent.approve(id,{csrf,ownerSecret:'owner-key',consent:'yes'},csrf,'https://example.test'),/CONSENT/);
+});
+
+test('a definite canvas estimate is frozen into consent and a missing price stays unknown',async t=>{
+ assert.equal(quoteFromEstimate({estimatePrice:'1,234.5',currency:'CNY',nodeCount:1,taskCount:1}).runningHubCredits,1234.5);
+ assert.equal(quoteFromEstimate({estimatePrice:0,taskCount:1}).runningHubCredits,0);
+ assert.equal(quoteFromEstimate({estimatePrice:0}),null);
+ assert.equal(quoteFromEstimate({}),null);
+ assert.equal(quoteFromEstimate({estimatePrice:''}),null);
+ const root=await temp(t),context={canvasUrl:'https://www.runninghub.ai/project/canvas/c',sessionId:'s'};
+ const sourceUrl='https://example.com/source.png';
+ const source={id:'source',type:'rh-image',position:{x:0,y:0},data:{output:[{url:sourceUrl,mediaCategory:'image',success:true}]}};
+ const target={id:'target',type:'rh-image',data:{title:'超分',modelCode:'upscale',output:[]}};
+ const snapshot={canvasId:'c',nodes:[source,target],edges:[]};
+ const request={canvasId:'c',targetType:'NODE',targetId:'target',canvas:{nodes:[target],edges:[]}};
+ const digest='a'.repeat(64);
+ const bridgeFor=estimate=> ({
+  wireId:id=>id,
+  request:async()=>({target:null}),
+  command:async(type,args)=>{
+   if(type==='canvas.yjsSnapshot')return {result:structuredClone(snapshot)};
+   if(type==='canvas.preflight')return {result:{ok:true,digest,echo:sourceUrl}};
+   if(type==='canvas.runNode'){assert.equal(args.dryRun,true);assert.equal(args.nodeId,'target');assert.equal(args.expectedDigest,digest);assert.deepEqual(JSON.parse(args.expectedNode),target);return {result:{request}};}
+   if(type==='canvas.platformRead'){assert.equal(args.operation,'priceEstimate');assert.equal(args.body,request);if(estimate instanceof Error)throw estimate;return {result:estimate};}
+   throw Error(type);
+  }
+ });
+ const quotedJobs=new MediaOperations({root,bridgeFactory:()=>bridgeFor({estimatePrice:'12.5',currency:'CNY',nodeCount:1,taskCount:1})});
+ await quotedJobs.init();
+ const quoted=await quotedJobs.plan({sourceNodeId:'source',processingNodeId:'target',operation:'image_upscale',provider:'canvas-model',routingReason:'The canvas model keeps the original framing'},context);
+ assert.equal(quoted.cost.kind,'quoted');assert.equal(quoted.cost.runningHubCredits,12.5);assert.equal(quoted.cost.currency,'CNY');
+ const consent=new MediaConsent({root,origin:'https://example.test',secretHash:hash('owner-key')});
+ const page=await consent.page(quoted.id);
+ assert.match(page.html,/平台报价：12\.5 CNY/);assert.doesNotMatch(page.html,/尚未确认/);
+ const unknownRoot=await temp(t);
+ const unknownJobs=new MediaOperations({root:unknownRoot,bridgeFactory:()=>bridgeFor(new Error('PRICE_UNAVAILABLE'))});
+ await unknownJobs.init();
+ const unknown=await unknownJobs.plan({sourceNodeId:'source',processingNodeId:'target',operation:'image_upscale',provider:'canvas-model',routingReason:'Quote failed, so the cost remains unknown'},context);
+ assert.equal(unknown.cost.kind,'unknown');assert.equal(unknown.cost.runningHubCredits,null);
+ await assert.rejects(unknownJobs.execute(unknown.id,context),/CONSENT/);
+});
+
+test('blank or malformed quotes stay unknown while an explicit counted zero still requires consent',async t=>{
+ for(const estimatePrice of [' ','\t\n',[],[1,2],{},false,true,'1,23','1,,000',-1,NaN,Infinity]){
+  assert.equal(quoteFromEstimate({estimatePrice,taskCount:1}),null,JSON.stringify(estimatePrice));
+ }
+ for(const taskCount of [true,[],null,'',1.5])assert.equal(quoteFromEstimate({estimatePrice:0,taskCount}),null);
+ assert.equal(quoteFromEstimate({estimatePrice:' 1,234.5 ',nodeCount:'1'}).runningHubCredits,1234.5);
+ assert.equal(quoteFromEstimate({estimatePrice:0.0000001,taskCount:1}).runningHubCredits,0.0000001);
+ const cost=quoteFromEstimate({estimatePrice:0,taskCount:1});
+ assert.equal(cost.kind,'quoted');
+ const root=await temp(t),id=randomUUID();
+ const plan={id,digest:'zero-plan',canvasUrl:'https://www.runninghub.ai/project/canvas/c',state:'awaiting_consent',expiresAt:Date.now()+60000,cost};
+ await saveJson(join(root,id+'.json'),plan);
+ const consent=new MediaConsent({root,origin:'https://example.test',secretHash:hash('owner-key')});
+ assert.match((await consent.page(id)).html,/平台报价：0/);
+ const jobs=new MediaOperations({root});await jobs.init();
+ await assert.rejects(jobs.execute(id,{canvasUrl:plan.canvasUrl}),/USER_CONSENT_REQUIRED/);
+});
+
+test('concurrent parameter changes cannot attach a different preview quote to the frozen plan',async t=>{
+ const root=await temp(t),sourceUrl='https://example.com/source.png',digest='b'.repeat(64);
+ const source={id:'source',type:'rh-image',data:{output:[{url:sourceUrl,mediaCategory:'image',success:true}]}};
+ const target={id:'target',type:'rh-image',data:{modelCode:'upscale',params:{scale:4},output:[]}};
+ let estimates=0,previewDigest;
+ const jobs=new MediaOperations({root,bridgeFactory:()=>({
+  request:async()=>null,
+  command:async(type,args)=>{
+   if(type==='canvas.yjsSnapshot')return{result:{canvasId:'c',nodes:[source,target],edges:[]}};
+   if(type==='canvas.preflight')return{result:{ok:true,digest,reference:sourceUrl}};
+   if(type==='canvas.runNode'){
+    previewDigest=args.expectedDigest;
+    // The page has changed to scale=2 since preflight; its pinned preview rejects.
+    if(args.expectedDigest===digest)throw Error('EDIT_CONFLICT: preflight digest changed');
+    return{result:{request:{canvasId:'c',targetType:'NODE',targetId:'target',canvas:{nodes:[{...target,data:{...target.data,params:{scale:2}}}],edges:[]}}}};
+   }
+   if(type==='canvas.platformRead'){estimates++;return{result:{estimatePrice:10,taskCount:1}};}
+   throw Error(type);
+  }
+ })});
+ await jobs.init();
+ const p=await jobs.plan({sourceNodeId:'source',processingNodeId:'target',operation:'image_upscale',provider:'canvas-model',routingReason:'Keep frozen input'}, {canvasUrl:'https://www.runninghub.ai/project/canvas/c'});
+ assert.equal(previewDigest,digest);assert.equal(estimates,0);
+ assert.equal(p.processingSummary.params.scale,4);assert.equal(p.cost.kind,'unknown');
 });
 test('unknown-cost canvas jobs cannot self-approve or bypass consent and dispatch once only',async t=>{
  const root=await temp(t),context={canvasUrl:'https://www.runninghub.ai/project/canvas/c',sessionId:'s'},source={id:'source',type:'rh-video',position:{x:0,y:0},data:{output:[{url:'https://example.com/source.mp4'}]}},target={id:'target',type:'rh-video',data:{output:[]}},snapshot={canvasId:'c',nodes:[source,target],edges:[]};let calls=0;
@@ -49,6 +132,20 @@ test('unknown browser receipt is reconciled by status without replaying a comman
  await saveJson(join(root,id+'.json'),{id,canvasUrl,provider:'canvas-browser',state:'unknown',commandRequestId:'same-request',cost:{kind:'free'}});
  const jobs=new MediaOperations({root,bridgeFactory:()=>({request:async path=>{assert.equal(path,'/result?id=same-request');reads++;return {ok:true,result:{primaryReference:{nodeId:'already-created'}}};},command:()=>{throw Error('MUST_NOT_REPLAY');}})});await jobs.init();
  assert.equal((await jobs.refreshStatus(id,{canvasUrl})).state,'complete');await jobs.refreshStatus(id,{canvasUrl});assert.equal(reads,1);
+});
+test('an uncertain page write stays unknown during media status recovery and after restart',async t=>{
+ const root=await temp(t),id=randomUUID(),canvasUrl='https://www.runninghub.ai/project/canvas/c';
+ const event={ok:false,errorCode:'CANVAS_WRITE_OUTCOME_UNKNOWN',submissionState:'unknown'};
+ await saveJson(join(root,id+'.json'),{id,canvasUrl,provider:'canvas-browser',state:'unknown',commandRequestId:'original',cost:{kind:'free'}});
+ let executions=0;
+ const bridgeFactory=()=>({request:async()=>event,command:async()=>{executions++;throw Error('MUST_NOT_REPLAY');}});
+ const jobs=new MediaOperations({root,bridgeFactory});await jobs.init();
+ const p=await jobs.refreshStatus(id,{canvasUrl});
+ assert.equal(p.state,'unknown');assert.equal(p.receipt.submissionState,'unknown');
+ await jobs.execute(id,{canvasUrl});
+ const reloaded=new MediaOperations({root,bridgeFactory});await reloaded.init();
+ assert.equal((await reloaded.refreshStatus(id,{canvasUrl})).state,'unknown');
+ assert.equal(executions,0);
 });
 test('real local FFmpeg video/image processing creates verified results without modifying input',async t=>{
  const root=await temp(t);let binary;try{binary=await ffmpegPath();}catch{return t.skip('FFmpeg not installed on this host');}

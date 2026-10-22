@@ -8,10 +8,11 @@ const execute=promisify(execFile);
 export async function diagnose(bridge) {
   const checks=[];
   const add=(name,status,detail,fix)=>checks.push({name,status,detail,...(fix?{fix}:{})});
-  add('node',(Number(process.versions.node.split('.')[0])>20 || (Number(process.versions.node.split('.')[0])===20 && Number(process.versions.node.split('.')[1])>=19))?'pass':'fail',process.version,'Install Node.js 20.19 or newer.');
-  let clients=[],health;
+  add('node',Number(process.versions.node.split('.')[0])>=22?'pass':'fail',process.version,'Install Node.js 22 or newer.');
+  let clients=[],health,deployment;
   try {
     [health,clients]=await Promise.all([bridge.request('/health'),bridge.request('/clients')]);
+    deployment=await bridge.request('/build-info').catch(()=>({available:false}));
     const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
     add('bridge',health.version===pkg.version?'pass':'warning',`Bridge ${health.version}; client ${pkg.version}`,health.version===pkg.version?null:'Restart the bridge from the current installation.');
     add('browser',clients.length?'pass':'fail',`${clients.length} connected canvas tab(s)`,clients.length?null:'Enable the extension in the logged-in Chrome/Edge profile and open the target canvas.');
@@ -31,7 +32,7 @@ export async function diagnose(bridge) {
   const config=process.env.RH_LUMEN_MCP_CONFIG || (process.platform==='darwin'?join(homedir(),'Library/Application Support/Lumen/mcp-client.json'):null);
   if(!config)add('lumen','optional','Lumen archive integration is not configured','If needed, set RH_LUMEN_MCP_CONFIG to the exported MCP client configuration.');
   else try {const value=JSON.parse(await readFile(config,'utf8')).mcpServers?.lumen;add('lumen',value?.command && Array.isArray(value.args)?'pass':'warning','Configuration structure checked; server connection not tested',value?.command?null:'Export the Lumen MCP configuration again.');}catch{add('lumen','warning','Lumen configuration could not be read','Check RH_LUMEN_MCP_CONFIG and export the configuration again.');}
-  return {ok:!checks.some(c=>c.status==='fail'),platform:process.platform,checks,nextActions:[...new Set(checks.filter(c=>['fail','warning','unknown'].includes(c.status)).map(c=>c.fix).filter(Boolean))]};
+  return {ok:!checks.some(c=>c.status==='fail'),platform:process.platform,deployment,checks,nextActions:[...new Set([...checks.filter(c=>['fail','warning','unknown'].includes(c.status)).map(c=>c.fix).filter(Boolean),...(deployment?.nextActions||[])])]};
 }
 
 export async function diagnoseConnection(bridge) {

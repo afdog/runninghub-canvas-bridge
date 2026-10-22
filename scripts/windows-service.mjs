@@ -12,14 +12,15 @@ export function launcherSource(node,runner,config) {
   return 'Set shell = CreateObject("WScript.Shell")\r\nshell.Run '+vbsQuote(command)+', 0, False\r\n';
 }
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-export async function windowsService(action,{root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),home=homedir(),env=process.env}={}) {
+export async function windowsService(action,{root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),home=homedir(),env=process.env,port=18765}={}) {
+  if(!Number.isInteger(port)||port<1024||port>65535)throw Error('INVALID_BRIDGE_PORT');
   if(!env.APPDATA) throw new Error('APPDATA is required for per-user startup');
   const dir=join(home,'.runninghub-canvas-bridge'),configPath=join(dir,'service.json'),launcher=join(dir,'start-bridge.vbs');
   const startup=join(env.APPDATA,'Microsoft','Windows','Start Menu','Programs','Startup','RunningHub Canvas Bridge.vbs');
   const lock=join(dir,'service.pid'),stop=join(dir,'service.stop');
   const exists=async path=>{try{await access(path);return true;}catch{return false;}};
   const status=async()=>{
-    let health=null;try{health=await (await fetch('http://127.0.0.1:18765/health',{signal:AbortSignal.timeout(1500)})).json();}catch{}
+    let health=null;try{health=await (await fetch('http://127.0.0.1:'+port+'/health',{signal:AbortSignal.timeout(1500)})).json();}catch{}
     let pid=null;try{pid=JSON.parse(await readFile(lock,'utf8')).pid;}catch{}
     let running=false;try{if(pid){process.kill(pid,0);running=true;}}catch{}
     let instance=null;try{instance=JSON.parse(await readFile(configPath,'utf8')).env.RH_BRIDGE_INSTANCE_ID;}catch{}
@@ -47,7 +48,7 @@ export async function windowsService(action,{root=resolve(dirname(fileURLToPath(
   if(action==='uninstall') {await halt();await unlink(startup).catch(e=>{if(e.code!=='ENOENT')throw e;});return {ok:true,installed:false,retainedData:dir};}
   if(action==='install') {
     await halt();await mkdir(dir,{recursive:true});await mkdir(dirname(startup),{recursive:true});
-    const config={root,node:process.execPath,server:join(root,'server','server.mjs'),env:{NODE_ENV:'production',RH_BRIDGE_INSTANCE_ID:randomUUID(),RH_BRIDGE_ACCESS_FILE:join(dir,'access.json'),RH_BRIDGE_ALLOW_GENERATION:env.RH_BRIDGE_ALLOW_GENERATION==='1'?'1':'0',...Object.fromEntries(['RH_FFPROBE','RH_LUMEN_MCP_CONFIG','RH_ARCHIVE_DIR','RH_COMMAND_DIR'].filter(k=>env[k]).map(k=>[k,env[k]]))}};
+    const config={root,node:process.execPath,server:join(root,'server','server.mjs'),env:{NODE_ENV:'production',RH_BRIDGE_PORT:String(port),RH_BRIDGE_INSTANCE_ID:randomUUID(),RH_BRIDGE_ACCESS_FILE:join(dir,'access.json'),RH_BRIDGE_ALLOW_GENERATION:env.RH_BRIDGE_ALLOW_GENERATION==='1'?'1':'0',...Object.fromEntries(['RH_FFPROBE','RH_LUMEN_MCP_CONFIG','RH_ARCHIVE_DIR','RH_COMMAND_DIR'].filter(k=>env[k]).map(k=>[k,env[k]]))}};
     await writeFile(configPath,JSON.stringify(config,null,2));
     const source=launcherSource(process.execPath,join(root,'scripts','service-runner.mjs'),configPath);
     // UTF-16LE is understood by Windows Script Host for non-ASCII usernames/paths.
