@@ -156,7 +156,7 @@ watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?deta
 
 ChatGPT 专用 Secure MCP Tunnel 和 Gemini/Grok 使用的公网 HTTP 网关是独立入口；应分别确认实际运行主机。Mac 合盖休眠时，其上的隧道也会离线。需要持续可用时，把专用隧道迁到常开电脑，保留原 tunnel ID 与 runtime key；先停止旧主机的监督器及原 alias，再在新主机连接同一身份。不要让两台机器同时占用同一个隧道。插件本地文件路径按新宿主解释，本地 stdio MCP 可继续在另一台机器使用。
 
-本项目提供跨平台管理脚本 `scripts/tunnel-manager.mjs status|connect|stop`，默认读取私有的 `~/.runninghub-canvas-bridge/chatgpt-tunnel/config.json`，或通过 `--config` / `RH_TUNNEL_CONFIG` 指定。配置包含绝对路径 `client`、`node`、`root`、`runtimeKeyFile`、`profileDir`，以及原有 `alias`、`tunnelId`、`profile`，可选本机 `bridgeUrl`。密钥以文件引用交给官方客户端，管理器不会创建新隧道或授权。
+本项目提供跨平台管理脚本 `scripts/tunnel-manager.mjs status|connect|stop`，默认读取私有的 `~/.runninghub-canvas-bridge/chatgpt-tunnel/config.json`，或通过 `--config` / `RH_TUNNEL_CONFIG` 指定。配置包含绝对路径 `client`、`node`、`root`、`runtimeKeyFile`、`profileDir`，以及原有 `alias`、`tunnelId`、`profile`，可选本机 `bridgeUrl` 和该隧道专用的 `env` 环境变量（如已有代理设置）。密钥以文件引用交给官方客户端，管理器不会创建新隧道或授权。
 
 ```sh
 node scripts/tunnel-watchdog.mjs /absolute/install/scripts/tunnel-manager.mjs --restart-stalled

@@ -13,8 +13,8 @@ export function tunnelArguments(action,c){
  if(action!=='connect')return ['runtimes',action,c.alias,'--json'];
  return ['runtimes','connect','--alias',c.alias,'--tunnel-id',c.tunnelId,'--mcp-command',JSON.stringify(c.node)+' '+JSON.stringify(join(c.root,'server/mcp.mjs')),'--runtime-api-key','file:'+c.runtimeKeyFile,'--profile',c.profile,'--profile-dir',c.profileDir,'--json'];
 }
-export function runTunnelClient(client,args){return new Promise((done,reject)=>{
- const child=spawn(client,args,{windowsHide:true,stdio:['ignore','pipe','pipe']});let out='',size=0;
+export function runTunnelClient(client,args,{env=process.env}={}){return new Promise((done,reject)=>{
+ const child=spawn(client,args,{env,windowsHide:true,stdio:['ignore','pipe','pipe']});let out='',size=0;
  const timer=setTimeout(()=>child.kill(),40000);child.stdout.on('data',b=>{size+=b.length;if(size>2*1024**2)child.kill();else out+=b;});child.stderr.resume();
  child.once('error',()=>{clearTimeout(timer);reject(Error('TUNNEL_CLIENT_START_FAILED'));});
  child.once('close',code=>{clearTimeout(timer);if(code!==0)return reject(Error('TUNNEL_CLIENT_COMMAND_FAILED'));try{done(JSON.parse(out));}catch{reject(Error('TUNNEL_CLIENT_RESULT_INVALID'));}});
@@ -27,7 +27,7 @@ export async function manageTunnel(action,c,{run=runTunnelClient,fetchImpl=fetch
   const r=await fetchImpl(new URL('/health',url),{signal:AbortSignal.timeout(3000),redirect:'error'});if(!r.ok)throw Error('BRIDGE_NOT_READY');const health=await r.json();
   if(health.product!=='runninghub-canvas-bridge'||health.update?.maintenance!==false)throw Error('BRIDGE_NOT_READY');
  }
- return run(c.client,args);
+ return run(c.client,args,{env:{...process.env,...c.env}});
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
  try{const action=process.argv[2]||'status',i=process.argv.indexOf('--config'),file=i>=0?process.argv[i+1]:process.env.RH_TUNNEL_CONFIG||defaultTunnelConfig();const config=JSON.parse(await readFile(file,'utf8'));console.log(JSON.stringify(await manageTunnel(action,config)));}

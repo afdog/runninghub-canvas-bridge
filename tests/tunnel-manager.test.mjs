@@ -25,3 +25,9 @@ test('updater waits for bridge restart before reconnecting the tunnel, with boun
  await assert.rejects(waitTunnelBridge('config',{...deps,attempts:2,fetchImpl:async()=>{throw Error('offline');}}),/TUNNEL_BRIDGE_NOT_READY/);
  await assert.rejects(waitTunnelBridge('config',{...deps,readConfig:async()=>({bridgeUrl:'https://example.test'})}),/LOCAL_BRIDGE_REQUIRED/);
 });
+
+test('manager passes the saved tunnel environment when invoked outside the logged-in launcher',async()=>{
+ const env={HTTPS_PROXY:'http://127.0.0.1:7890',NO_PROXY:'127.0.0.1,localhost'};let childEnv;
+ await manageTunnel('status',{...c(),env},{run:async(_client,_args,options)=>{childEnv=options.env;return{process_running:true};}});
+ assert.equal(childEnv.HTTPS_PROXY,env.HTTPS_PROXY);assert.equal(childEnv.NO_PROXY,env.NO_PROXY);assert.notEqual(childEnv,process.env);
+});
