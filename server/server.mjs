@@ -51,7 +51,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.10.8";
+const PRODUCT_VERSION = "0.10.9";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];

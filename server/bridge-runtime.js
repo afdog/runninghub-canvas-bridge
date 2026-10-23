@@ -1778,8 +1778,8 @@
       if (!targetNode) throw new Error(`Node not found: ${target}`);
       if (expectedNode !== undefined && FEATURES.canonical(targetNode) !== expectedNode) throw new Error("EDIT_CONFLICT: frozen processing node changed");
       if(isApp){
-        const checked=await globalThis.RHProductionFeatures.appPreflight({nodes:currentNodes,edges:currentEdges},target);
-        if(!checked.ok)throw new Error('APP_PREFLIGHT_FAILED: '+checked.errors.join('; '));
+        const checked=await globalThis.RHProductionFeatures.appPreflight({nodes:currentNodes,edges:currentEdges},target,expected);
+        if(!checked.ok)throw Object.assign(new Error('APP_PREFLIGHT_FAILED: '+checked.errors.join('; ')),{code:'APP_PREFLIGHT_FAILED',details:{submitted:false,submissionState:'not_submitted',retryable:false,expectationErrors:checked.expectationErrors}});
         if(expectedDigest&&checked.digest!==expectedDigest)throw new Error('EDIT_CONFLICT: app inputs changed');
         if(FEATURES.canonical(FEATURES.executionState({nodes:currentNodes,edges:currentEdges},target))!==FEATURES.canonical(FEATURES.executionState({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)},target)))throw new Error('EDIT_CONFLICT: app graph changed during validation');
         return {canvasId,targetType:'NODE',targetId:target,canvas:{nodes:[checked.resolvedNode],edges:[]}};

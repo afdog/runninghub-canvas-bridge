@@ -1,6 +1,6 @@
 # Agent 快速上手
 
-0.10.8 · [安装](AGENT_INSTALL.md) · [完整工具目录](docs/TOOLS.md)
+0.10.9 · [安装](AGENT_INSTALL.md) · [完整工具目录](docs/TOOLS.md)
 
 ## 先发现，再固定任务连接
 
@@ -157,3 +157,38 @@ Return `approvalUrl` to the human for any paid/unknown plan. It requires the exi
 `rh_apply_node_history` changes only the selected result by default; `restoreParams=true` restores recorded parameters/model settings while preserving links, geometry and user adoption. Native history selection is not creative acceptance. `rh_delete_node_history` is irreversible and requires explicit user deletion consent; the current output is protected. Copies have new native history identity; provenance is recorded separately.
 
 For AI application history, restore uses the recorded `nodeInfoList` mapped to the same app ID and exact input fields. The default `appBindingPolicy=preserve` refuses conflicting bound inputs. Only explicitly choose `detach_changed` when restoring historical literal inputs is intended; it detaches changed field bindings while leaving shared source nodes and canvas edges untouched. Never claim a `params` patch restored app inputs.
+
+
+## 原生应用预检的 expected（0.10.9）
+
+`rh_preflight` 检查当前保存的画布和实际解析后的绑定值。`rh_configure_app(dryRun:true)` 只预演，随后预检仍读取原保存值。未通过的预检返回 `ok:false`、结构化 `expectationErrors` 和 `digest:null`；只有通过后才把 digest 交给 `rh_run_node`。
+
+外层 `nodeId` 是画布应用节点；`expected.appInputs[].nodeId` 是 `inputNodes` 内的输入编号。先读取 `rh_app_schema` / `rh_get_node(view:"inputs")`，按实际字段填写，例如：
+
+```json
+{
+  "scopeId": "当前画布返回的 scopeId",
+  "nodeId": "P001-app",
+  "expected": {
+    "prompt": "本轮完整提示词",
+    "promptField": {"nodeId": "263", "fieldName": "text"},
+    "appInputs": [
+      {"nodeId": "263", "fieldName": "text", "value": "本轮完整提示词", "sourceNodeId": null},
+      {"nodeId": "10", "fieldName": "duration", "value": "12"},
+      {"nodeId": "11", "fieldName": "image", "sourceNodeId": "reference-image-node"}
+    ],
+    "params": {"instanceType": "default", "apiKeyMode": "standard"},
+    "references": [
+      {"parameter": "11:image", "url": "https://example.com/reference.png", "sourceNodeId": "reference-image-node"}
+    ]
+  }
+}
+```
+
+上述输入编号仅为示例，不能直接用于别的应用。字段值严格保留类型，`"12"` 与 `12` 不相等。`sourceNodeId:null` 明确检查无绑定，不传则只检查提供的值。预期值与真正解析的输入比较，绑定文本/图片变化会被发现。
+
+`expected.prompt` 仅在应用恰好只有一个 STRING 输入时可省略 `promptField`；多个文本输入必须明确定位，或直接使用 `appInputs`。`expected.params.inputs` 兼容同样的输入数组，但不得与 `appInputs` 同时使用。原生 `params` 其余支持项是 `instanceType`、`apiKeyMode`、`generateNum`；`cleanupUnusedInputs` 等操作开关不属于保存的生成参数，预检会明确报错。
+
+`expected.references` 是所有已填媒体输入的完整映射，`parameter` 使用 `内部nodeId:fieldName`；直接填 URL 的未绑定输入使用 `sourceNodeId:null`。只关心部分输入时使用 `appInputs`。普通模型继续使用 `expected.prompt`、`expected.params` 和参数名形式的 references，不接受原生应用专用字段。
+
+`rh_run_node` 使用相同 expected 校验，并在提交前再次核对 digest。预检成功后输入或真实上游依赖发生变化时，需要重新读取并预检；不会自动重发生成。

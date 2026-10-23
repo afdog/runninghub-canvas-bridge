@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-当前版本 0.10.8，仍为 **83** 个工具。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
+当前版本 0.10.9，仍为 **83** 个工具。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
 
 所有画布工具携带任务自己的 `scopeId`。连接、账号目录和独立下载状态等工具不需要画布 scope。参见 [调用流程](../AGENT_QUICKSTART.md)。
 
@@ -49,7 +49,7 @@
 
 | 工具 | 用途 |
 | --- | --- |
-| `rh_preflight` | Check live model constraints, connected reference slots and optional exact expected prompt/params/reference mapping. Returns a digest to pin rh_run_node. Does not assess artistic quality. |
+| `rh_preflight` | Check saved/resolved inputs, not a dry-run preview. Native apps support exact appInputs and promptField; failures return expectationErrors and no usable digest. See Agent quickstart for the full expected contract. |
 | `rh_list_models` | Discover current platform models and their raw configuration. Live account/team context; not a price or entitlement guarantee. |
 | `rh_model_schema` | Read live model parameter names, types, options, defaults and constraints. Pass modelType from rh_list_models as types to disambiguate modes. |
 | `rh_inspect_references` | Recognize actual image/video/audio outputs, including rh-ai generated nodes. Returns exact output URLs and a revision for binding. |

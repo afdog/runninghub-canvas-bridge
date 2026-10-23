@@ -10,3 +10,8 @@ test('app and permanent history failures have distinct recovery actions',()=>{
  const app=toolGuidance({ok:false,error:'APP_INPUT_UNKNOWN: field'},{args:{nodeId:'n',scopeId:'scope'}});assert.equal(app.recovery.tool,'rh_app_schema');assert.equal(app.recovery.arguments.nodeId,'n');
  const history=toolGuidance({ok:false,errorCode:'COMMAND_FAILED',error:'Error: HISTORY_EMBEDDED_ENTRY_CONFLICT'});assert.equal(history.errorCode,'HISTORY_EMBEDDED_ENTRY_CONFLICT');assert.equal(history.recovery.retryable,false);assert.equal(history.recovery.tool,undefined);
 });
+test('native expectation diagnostics retain structured errors and distinguish identity fixes from value rereads',()=>{
+ for(const [code,tool]of [['APP_EXPECTED_PROMPT_AMBIGUOUS','rh_app_schema'],['APP_EXPECTED_VALUE_MISMATCH','rh_get_node']]){
+  const r=toolGuidance({ok:false,result:{ok:false,errorCode:'APP_EXPECTATION_FAILED',expectationErrors:[{code,path:'expected.prompt'}]}},{args:{nodeId:'outer',scopeId:'scope'}});assert.equal(r.errorCode,'APP_EXPECTATION_FAILED');assert.equal(r.recovery.tool,tool);assert.equal(r.recovery.arguments.scopeId,'scope');assert.equal(r.recovery.retryable,false);
+ }
+});

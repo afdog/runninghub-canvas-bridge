@@ -17,6 +17,15 @@ export function run(command,args,options={}) {
 const psQuote=s=>"'"+s.replaceAll("'","''")+"'";
 const powershell=source=>run('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop'; "+source,'utf16le').toString('base64')]);
 const alive=async p=>{let value;try{value=await readJson(p);}catch(e){if(e.code==='ENOENT')return false;throw e;}if(!Number.isInteger(value.pid)||value.pid<1)throw Error('INVALID_SERVICE_PID');try{process.kill(value.pid,0);return true;}catch(e){if(e.code==='ESRCH')return false;throw e;}};
+export async function discoverSecureTunnel(config,{existsFile=exists,readConfig=readJson,runCommand=run}={}){
+  const configPath=join(config.data,'chatgpt-tunnel/config.json');if(!await existsFile(configPath))return [];
+  const tunnel=await readConfig(configPath);if(resolve(tunnel.root)!==resolve(config.root))return [];
+  const manager=join(config.root,'scripts/tunnel-manager.mjs');
+  if(!await existsFile(manager))throw Error('TUNNEL_MANAGER_MISSING');
+  // Only an already-running owner alias joins this update. Stopped aliases stay stopped.
+  const state=JSON.parse(await runCommand(config.node,[manager,'status','--config',configPath]));
+  return state.process_running===true?[{kind:'secure-tunnel',name:'chatgpt',node:config.node,manager,configPath}]:[];
+}
 export async function discoverServices(config) {
   const services=[];
   if(process.platform==='win32'){
@@ -41,12 +50,15 @@ export async function discoverServices(config) {
       try{await run('launchctl',['print',`gui/${userInfo().uid}/${label}`]);services.push({kind:'launchd',label,plist});}catch{}
     }
   }
-  return services;
+  return [...services,...await discoverSecureTunnel(config)];
 }
 export async function stopServices(services) {
   // Stop the public gateway first. Credentials and service definitions stay in place.
   for(const s of [...services].reverse()){
-    if(s.kind==='windows'){
+    if(s.kind==='secure-tunnel'){
+      await run(s.node,[s.manager,'stop','--config',s.configPath]);
+      const state=JSON.parse(await run(s.node,[s.manager,'status','--config',s.configPath]));if(state.process_running!==false)throw Error('TUNNEL_STOP_NOT_CONFIRMED');
+    }else if(s.kind==='windows'){
       if(!await alive(join(s.dir,s.prefix+'.pid')))continue;
       await writeFile(join(s.dir,s.prefix+'.stop'),'update');
       for(let i=0;i<160 && await alive(join(s.dir,s.prefix+'.pid'));i++)await delay(250);
@@ -54,9 +66,19 @@ export async function stopServices(services) {
     }else await run('launchctl',['bootout',`gui/${userInfo().uid}/${s.label}`]);
   }
 }
+export async function waitTunnelBridge(configPath,{readConfig=readJson,fetchImpl=fetch,sleep=delay,attempts=30}={}){
+  const c=await readConfig(configPath),url=new URL(c.bridgeUrl||'http://127.0.0.1:18765');
+  if(url.protocol!=='http:'||!['localhost','127.0.0.1','[::1]'].includes(url.hostname)||url.username||url.password)throw Error('LOCAL_BRIDGE_REQUIRED');
+  for(let i=0;i<attempts;i++){
+    try{const r=await fetchImpl(new URL('/health',url),{redirect:'error',signal:AbortSignal.timeout(1500)});if(r.ok){const h=await r.json();if(h.product==='runninghub-canvas-bridge'&&h.update?.maintenance===false)return;}}catch{}
+    if(i+1<attempts)await sleep(500);
+  }
+  throw Error('TUNNEL_BRIDGE_NOT_READY');
+}
 export async function startServices(services) {
   for(const s of services){
-    if(s.kind==='windows'){
+    if(s.kind==='secure-tunnel'){await waitTunnelBridge(s.configPath);await run(s.node,[s.manager,'connect','--config',s.configPath]);}
+    else if(s.kind==='windows'){
       if(await alive(join(s.dir,s.prefix+'.pid')))continue;
       await unlink(join(s.dir,s.prefix+'.stop')).catch(()=>{});
       if(s.task)await powershell('Start-ScheduledTask -TaskName '+psQuote(s.task));

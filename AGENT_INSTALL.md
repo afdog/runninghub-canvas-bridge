@@ -123,7 +123,7 @@ Gemini 自定义 MCP 目前需要英文界面：可用 `https://gemini.google.co
 
 这些目录可能包含私人画布数据和临时媒体地址，不要提交或打包发布。浏览器登录凭据留在网页内。
 
-## 可选：隧道掉线自动恢复（0.8.2）
+## 可选：隧道掉线自动恢复（0.10.9）
 
 `scripts/tunnel-watchdog.mjs` 可监督已有官方隧道管理脚本：
 
@@ -131,7 +131,7 @@ Gemini 自定义 MCP 目前需要英文界面：可用 `https://gemini.google.co
 node scripts/tunnel-watchdog.mjs /absolute/path/to/manager.mjs
 ```
 
-管理脚本须接受 `status` / `connect`，输出官方 runtime 状态 JSON。watchdog 每15秒检查一次；确认进程退出后重连，失败时逐步退避。运行中但网络不健康的进程不会被强杀。日志只输出状态，不回显密钥或原始配置。将 watchdog 配置到系统的用户后台服务中，进程退出后由系统重新启动。需要主动停止隧道时先停止 watchdog，否则它会按设计重连。
+管理脚本须接受 `status` / `connect`，输出官方 runtime 状态 JSON。watchdog 每15秒检查一次；确认进程退出后重连，失败时逐步退避。增加 `--restart-stalled` 时，管理脚本还必须支持 `stop`：云端成功轮询超过120秒、连续观察至少30秒，且隧道队列、执行请求、响应交付和本机桥接均空闲后才重启原 alias。短暂故障或状态不明时保留进程；先确认旧进程退出才重连，同一故障最多重启3次，恢复正常轮询后重置。日志只输出状态，不回显密钥或原始配置。将 watchdog 配置到系统的用户后台服务中，进程退出后由系统重新启动。需要主动停止隧道时先停止 watchdog，否则它会按设计重连。
 
 watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?details=true`，检查控制面最近成功轮询和快照时效。`polling` 表示最近轮询正常；`poll-degraded` 表示退避或连接异常；`poll-stalled` 表示成功轮询已超过正常等待范围；`poll-health-unavailable` 表示缺少实时证据。它们不等于客户端工具调用成功，验收仍需真实 MCP 调用。旧管理器未提供地址时无法确认云端状态。
 
@@ -150,3 +150,18 @@ watchdog 还会从官方 runtime 返回的本机管理地址读取 `/health?deta
 ## 自动更新（Windows / macOS）
 
 使用 Node.js 22+，从正式 Release 解压到固定目录的安装可运行 `node scripts/rh-update.mjs enable`；`status` 查看结果，`disable` 关闭。无需重建桥接或 OAuth 配置。更新只针对正式 Release，不覆盖 Git 工作区。首次从旧扩展升级需要重载一次，以后自动检测已登记文件的更新。完整的服务支持范围、独立扩展目录、授权保留与回退说明见 [自动更新](docs/AUTO_UPDATE.md)。
+
+
+### 常开电脑与 Secure MCP Tunnel
+
+ChatGPT 专用 Secure MCP Tunnel 和 Gemini/Grok 使用的公网 HTTP 网关是独立入口；应分别确认实际运行主机。Mac 合盖休眠时，其上的隧道也会离线。需要持续可用时，把专用隧道迁到常开电脑，保留原 tunnel ID 与 runtime key；先停止旧主机的监督器及原 alias，再在新主机连接同一身份。不要让两台机器同时占用同一个隧道。插件本地文件路径按新宿主解释，本地 stdio MCP 可继续在另一台机器使用。
+
+本项目提供跨平台管理脚本 `scripts/tunnel-manager.mjs status|connect|stop`，默认读取私有的 `~/.runninghub-canvas-bridge/chatgpt-tunnel/config.json`，或通过 `--config` / `RH_TUNNEL_CONFIG` 指定。配置包含绝对路径 `client`、`node`、`root`、`runtimeKeyFile`、`profileDir`，以及原有 `alias`、`tunnelId`、`profile`，可选本机 `bridgeUrl`。密钥以文件引用交给官方客户端，管理器不会创建新隧道或授权。
+
+```sh
+node scripts/tunnel-watchdog.mjs /absolute/install/scripts/tunnel-manager.mjs --restart-stalled
+```
+
+将监督器放入该用户的 LaunchAgent 或 Windows 登录计划任务。Windows 应从交互用户计划任务启动，避免 SSH 会话结束回收进程。后台需明确继承现有代理与 NO_PROXY 设置；实际连接以官方健康快照和一次插件调用验收。
+
+自动更新器发现上述默认私有配置、安装根一致且 alias 正在运行时，会将其纳入升级：先停原 alias，再换代码，等待本机桥接恢复后连接新版；原已停止的 alias 保持停止。连接配置、密钥、profile 和 OAuth 继续放在安装目录外。迁移回退时先停新宿主，再启用旧宿主原服务和 alias。

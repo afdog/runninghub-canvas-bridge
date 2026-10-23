@@ -244,12 +244,13 @@
           refs.push({parameter:field.name,url,sourceNodeId:source?.id});
         }
         const expected=command.expected || {};
+        for(const name of Object.keys(expected))if(!['prompt','params','references'].includes(name))check.errors.push('EXPECTED_FIELD_UNSUPPORTED: '+name+' is not supported for an ordinary model node');
         if(expected.prompt!==undefined && node.data.params?.prompt!==expected.prompt) check.errors.push('prompt: differs from expected text');
         for(const [key,value] of Object.entries(expected.params || {})) if(canonical(node.data.params?.[key])!==canonical(value)) check.errors.push(`${key}: differs from expected value`);
         if(expected.references && canonical([...refs].sort((a,b)=>canonical(a).localeCompare(canonical(b))))!==canonical([...expected.references].sort((a,b)=>canonical(a).localeCompare(canonical(b))))) check.errors.push('references: differ from expected complete mapping');
         const graph=executionState(snapshot,node.id);
         const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(graph)))),n=>n.toString(16).padStart(2,'0')).join('');
-        return {...check,ok:check.errors.length===0,nodeId:node.id,digest,references:refs,generationTriggered:false};
+        return {...check,ok:check.errors.length===0,nodeId:node.id,digest:check.errors.length?null:digest,references:refs,generationTriggered:false};
       };
       const preflight = async command => preflightSnapshot(await readSnapshot(),command);
       const batchUpdate = async command => withMutation(command,({Y,doc,nodes})=>{

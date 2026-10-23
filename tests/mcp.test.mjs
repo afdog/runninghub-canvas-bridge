@@ -162,3 +162,11 @@ test('model discovery accepts common categories and exact modes; recovery return
  const n=calls.length;assert.equal((await client.callTool({name:'rh_list_models',arguments:{types:['bogus']}})).isError,true);assert.equal(calls.length,n);
  const receipt=(await client.callTool({name:'rh_command_result',arguments:{requestId:'original-request'}})).structuredContent;assert.equal(receipt.submissionState,'rejected');assert.deepEqual(receipt.historyRoute,failure.historyRoute);assert.equal(receipt.retryable,false);
 });
+
+test('MCP preserves native expected identities and rejects unknown expectation fields and string booleans',async t=>{
+ const calls=[],server=createMcpServer({command:async(type,args)=>{calls.push({type,args});return {result:{ok:true}};}}),client=new Client({name:'native-expected',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);t.after(async()=>{await client.close();await server.close();});
+ const expected={prompt:'exact',promptField:{nodeId:'263',fieldName:'text'},appInputs:[{nodeId:'263',fieldName:'text',value:'exact',sourceNodeId:null}],references:[]};
+ assert.equal((await client.callTool({name:'rh_preflight',arguments:{nodeId:'outer',expected}})).isError,undefined);assert.deepEqual(calls[0].args.expected,expected);
+ for(const args of [{nodeId:'outer',expected:{unsupported:true}},{nodeId:'outer',expected:{appInputs:[{nodeId:'263',fieldName:'text',value:'exact',unknown:true}]}}])assert.equal((await client.callTool({name:'rh_preflight',arguments:args})).isError,true);
+ assert.equal((await client.callTool({name:'rh_configure_app',arguments:{nodeId:'outer',inputs:[{nodeId:'263',fieldName:'text',value:'x'}],dryRun:'True'}})).isError,true);assert.equal(calls.length,1);
+});

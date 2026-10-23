@@ -58,10 +58,77 @@
   }
   return {node,used:[...new Set(used)],errors,warnings};
  }
- async function appPreflight(snapshot,nodeId){
-  const resolved=resolvedApp(snapshot,nodeId);const pinned=F.executionState(snapshot,nodeId);
-  const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(F.canonical(pinned)));
-  return {ok:resolved.errors.length===0,nodeId,appId:resolved.node.data.aiApp.id,errors:resolved.errors,warnings:resolved.warnings,digest:Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join(''),resolvedNode:resolved.node};
+ function appExpectations(original,resolved,expected){
+  const fields=resolved.data.aiApp.inputNodes||[],saved=original.data.aiApp.inputNodes||[],issues=[];
+  const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const scalar=v=>['string','number','boolean'].includes(typeof v)&&(typeof v!=='number'||Number.isFinite(v));
+  const add=(code,path,message,input)=>issues.push({code,path,message,...(input?{input:{nodeId:String(input.nodeId),fieldName:input.fieldName}}:{})});
+  const fieldAt=(input,path)=>{
+   if(!object(input)||typeof input.nodeId!=='string'||!input.nodeId||typeof input.fieldName!=='string'||!input.fieldName){add('APP_EXPECTED_INPUT_INVALID',path,'Use the internal application nodeId and fieldName from inputNodes.');return;}
+   const matches=fields.filter(f=>key(f)===key(input));
+   if(matches.length!==1){add(matches.length?'APP_EXPECTED_INPUT_AMBIGUOUS':'APP_EXPECTED_INPUT_UNKNOWN',path,'Input must identify exactly one application field, not the outer canvas node.',input);return;}
+   return matches[0];
+  };
+  const references=fields.filter(f=>['IMAGE','VIDEO','AUDIO'].includes(String(f.fieldType).toUpperCase())&&!empty(f.fieldValue)&&f.fieldValue!=='None').map(f=>({parameter:key(f),url:f.fieldValue,sourceNodeId:saved.find(x=>key(x)===key(f))?.binding?.sourceNodeId??null}));
+  if(expected===undefined)return {issues,references};
+  if(!object(expected)){add('APP_EXPECTED_INVALID','expected','Expected must be an object.');return {issues,references};}
+  for(const name of Object.keys(expected))if(!['prompt','promptField','appInputs','params','references'].includes(name))add('APP_EXPECTED_UNSUPPORTED','expected.'+name,'Unsupported expectation.');
+  if(expected.promptField!==undefined&&expected.prompt===undefined)add('APP_EXPECTED_PROMPT_REQUIRED','expected.promptField','promptField requires expected.prompt.');
+  if(expected.prompt!==undefined){
+   let field;
+   if(expected.promptField!==undefined){
+    field=fieldAt(expected.promptField,'expected.promptField');
+    if(object(expected.promptField)&&Object.keys(expected.promptField).some(k=>!['nodeId','fieldName'].includes(k)))add('APP_EXPECTED_UNSUPPORTED','expected.promptField','Only nodeId and fieldName identify the prompt input.');
+   }else{
+    const strings=fields.filter(f=>String(f.fieldType||'STRING').toUpperCase()==='STRING');
+    if(strings.length!==1)add('APP_EXPECTED_PROMPT_AMBIGUOUS','expected.prompt','Specify promptField or appInputs when the application does not have exactly one STRING input.');
+    else field=strings[0];
+   }
+   if(field){
+    if(typeof expected.prompt!=='string'||String(field.fieldType||'STRING').toUpperCase()!=='STRING')add('APP_EXPECTED_PROMPT_INVALID','expected.prompt','Prompt expectations require a STRING input.',field);
+    else if(field.fieldValue!==expected.prompt)add('APP_EXPECTED_PROMPT_MISMATCH','expected.prompt','Resolved prompt differs from expected text; inspect resolvedNode.',field);
+   }
+  }
+  const params=expected.params;
+  if(params!==undefined&&!object(params))add('APP_EXPECTED_PARAMS_INVALID','expected.params','Use appInputs for native input values.');
+  if(object(params))for(const [name,value]of Object.entries(params)){
+   if(name==='inputs')continue;
+   if(!['instanceType','apiKeyMode','generateNum'].includes(name)){add('APP_EXPECTED_UNSUPPORTED','expected.params.'+name,'Native params support inputs, instanceType, apiKeyMode and generateNum; cleanup flags are not saved inputs.');continue;}
+   const actual=original.data[name];if(F.canonical(actual)!==F.canonical(value))add('APP_EXPECTED_PARAMETER_MISMATCH','expected.params.'+name,'Saved application setting differs from expected value.');
+  }
+  if(expected.appInputs!==undefined&&object(params)&&params.inputs!==undefined)add('APP_EXPECTED_INPUTS_CONFLICT','expected.appInputs','Use appInputs or params.inputs, not both.');
+  const inputs=expected.appInputs!==undefined?expected.appInputs:(object(params)?params.inputs:undefined),inputPath=expected.appInputs!==undefined?'expected.appInputs':'expected.params.inputs';
+  if(inputs!==undefined){
+   if(!Array.isArray(inputs)||!inputs.length)add('APP_EXPECTED_INPUTS_INVALID',inputPath,'Supply a nonempty array of exact input expectations.');
+   else {const seen=new Set();for(const [i,input]of inputs.entries()){
+    const path=inputPath+'['+i+']',field=fieldAt(input,path);if(!field)continue;
+    if(seen.has(key(input)))add('APP_EXPECTED_INPUT_DUPLICATE',path,'Each input may appear once.',input);seen.add(key(input));
+    for(const name of Object.keys(input))if(!['nodeId','fieldName','value','sourceNodeId'].includes(name))add('APP_EXPECTED_UNSUPPORTED',path+'.'+name,'Unsupported input expectation.',input);
+    if(!Object.hasOwn(input,'value')&&!Object.hasOwn(input,'sourceNodeId'))add('APP_EXPECTED_INPUT_INVALID',path,'Provide value and/or sourceNodeId (null means unbound).',input);
+    if(Object.hasOwn(input,'value')){
+     if(!scalar(input.value))add('APP_EXPECTED_INPUT_INVALID',path+'.value','Expected value must be a string, number or boolean.',input);
+     else if(F.canonical(field.fieldValue)!==F.canonical(input.value))add('APP_EXPECTED_VALUE_MISMATCH',path+'.value','Resolved input differs from expected value; comparison preserves types.',input);
+    }
+    if(Object.hasOwn(input,'sourceNodeId')){
+     const actual=saved.find(f=>key(f)===key(input))?.binding?.sourceNodeId??null;
+     if(input.sourceNodeId!==null&&(typeof input.sourceNodeId!=='string'||!input.sourceNodeId))add('APP_EXPECTED_INPUT_INVALID',path+'.sourceNodeId','Use a canvas source node ID or null.',input);
+     else if(actual!==input.sourceNodeId)add('APP_EXPECTED_BINDING_MISMATCH',path+'.sourceNodeId','Actual binding differs from expected source.',input);
+    }
+   }}
+  }
+  if(expected.references!==undefined){
+   const refs=expected.references;
+   if(!Array.isArray(refs)||refs.some(r=>!object(r)||typeof r.parameter!=='string'||typeof r.url!=='string'||!/^https:\/\//.test(r.url)||!(r.sourceNodeId===null||typeof r.sourceNodeId==='string'&&r.sourceNodeId)||Object.keys(r).some(k=>!['parameter','url','sourceNodeId'].includes(k))))add('APP_EXPECTED_REFERENCES_INVALID','expected.references','Use complete media mappings with parameter internalNodeId:fieldName, URL and sourceNodeId (null for literal URLs).');
+   else if(F.canonical([...references].sort((a,b)=>keyOrder(a,b)))!==F.canonical([...refs].sort((a,b)=>keyOrder(a,b))))add('APP_EXPECTED_REFERENCES_MISMATCH','expected.references','Resolved media inputs differ from the expected complete mapping.');
+  }
+  return {issues,references};
+ }
+ const keyOrder=(a,b)=>F.canonical(a).localeCompare(F.canonical(b));
+ async function appPreflight(snapshot,nodeId,expected){
+  const resolved=resolvedApp(snapshot,nodeId),original=snapshot.nodes.find(n=>n.id===nodeId);
+  const {issues,references}=appExpectations(original,resolved.node,expected);resolved.errors.push(...issues.map(i=>i.code+': '+i.path+': '+i.message));
+  const pinned=F.executionState(snapshot,nodeId),hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(F.canonical(pinned)));
+  return {ok:resolved.errors.length===0,...(issues.length?{errorCode:'APP_EXPECTATION_FAILED'}:{}),nodeId,appId:resolved.node.data.aiApp.id,errors:resolved.errors,warnings:resolved.warnings,expectationErrors:issues,references,validationState:'saved',generationTriggered:false,digest:resolved.errors.length?null:Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join(''),resolvedNode:resolved.node};
  }
  // Native remote-to-embedded adapter (same batch/task/output IDs, no fabricated entries).
  function nativeHistoryEntries(batches){
@@ -428,7 +495,7 @@
    const endpoints={cancel:'/canvas/task/cancel',renameCanvas:'/canvas/rename',createCanvas:'/canvas/create',createFolder:'/canvas/folder/create',renameFolder:'/canvas/folder/update',moveCanvas:'/canvas/move/v1/submit',renameAsset:'/canvas/asset/user/group/item/rename',renameAssetFolder:'/canvas/asset/user/group/rename',createAssetFolder:'/canvas/asset/user/folder/create',moveAssets:'/canvas/asset/user/folder/move',saveWorkflow:'/canvas/workflow/save',saveAsset:'/canvas/asset/user/folder/item/batch-add'};
    if(!endpoints[c.operation])throw new Error('PLATFORM_OPERATION_INVALID');if(c.operation==='cancel'){const current=await api('/canvas/task/batchStatus',{taskIds:[c.body.taskId]});const task=current.tasks?.find(t=>String(t.taskId)===String(c.body.taskId));if(!task)throw new Error('TASK_NOT_FOUND');if(String(task.canvasId)!==String(globalThis.RHCanvasSitePolicy.parseCanvas(location.href).canvasId))throw new Error('TASK_CANVAS_MISMATCH');if(['SUCCESS','FAILED','CANCELED','CANCELLED'].includes(task.status))return {cancelled:false,terminal:true,status:task.status};}if(c.dryRun)return {dryRun:true,request:{endpoint:endpoints[c.operation],body:c.body}};return api(endpoints[c.operation],c.body||{});
   };
-  return {recoveryState,nativeHistoryEntries,mergeHistoryEntries,inspectHistoryRoute,historyRouteStatus,cleanupNodes,processBrowserMedia,runMediaOperation,nodeHistory,syncNodeHistory,applyNodeHistory,deleteNodeHistory,cloneNodes,addTaskOutput,appSchema,createApp,configureApp,createModel,editGroups,transformNodes,applyWorkflow,platformRead,platformWrite,appPreflight:async c=>appPreflight(await readSnapshot(),c.nodeId)};
+  return {recoveryState,nativeHistoryEntries,mergeHistoryEntries,inspectHistoryRoute,historyRouteStatus,cleanupNodes,processBrowserMedia,runMediaOperation,nodeHistory,syncNodeHistory,applyNodeHistory,deleteNodeHistory,cloneNodes,addTaskOutput,appSchema,createApp,configureApp,createModel,editGroups,transformNodes,applyWorkflow,platformRead,platformWrite,appPreflight:async c=>appPreflight(await readSnapshot(),c.nodeId,c.expected)};
  }
  };
 })();

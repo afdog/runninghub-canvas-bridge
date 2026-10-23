@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.9 — native expectations and tunnel recovery (not yet published)
+
+- Validate native app expected prompt, exact internal input values, binding sources, saved settings and complete media reference mappings. Reject ambiguous or unsupported expectations. Preflight and run use the same checks; failed preflights return no usable digest. Dry-runs remain unapplied.
+- Add bounded, idle-only recovery of stale Secure MCP Tunnel runtimes; keep request identity and never replay operations. Short network failures, uncertain health and active work do not trigger restarts.
+- Add a portable manager for existing tunnel aliases and include running, installation-owned aliases in automatic updates without replacing credentials or authorization.
+
 ## 0.10.8 — 2026-10-23 — tool efficiency and bounded recovery
 
 - Reuse pending canvas/directory tabs and coalesce concurrent same-canvas connection jobs while retaining every caller receipt. Default connections reuse an existing provider; an explicitly requested browser remains authoritative.

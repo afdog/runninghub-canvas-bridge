@@ -606,3 +606,26 @@ test('node projections keep full revisions and app edits return fresh revisions 
  const edited=await run('edit','canvas.configureApp',{nodeId:'app',inputs:[{nodeId:'1',fieldName:'text',value:'新的完整正文'}]});
  const after=await run('after','canvas.getElement',{elementId:'app'});assert.equal(edited.result.revisions.app,after.revision);assert.notEqual(after.revision,full.revision);
 });
+
+test('native app dry-run stays unsaved; preflight and run enforce expected through the public runtime path',async t=>{
+ const f=fixture({allowWrites:true,generationEnabled:true,apiData:{'/api/webapp/detail':{id:'app',name:'Expected App',inputNodes:[{nodeId:'263',fieldName:'text',fieldType:'STRING',fieldValue:'OLD_PROMPT'},{nodeId:'10',fieldName:'seconds',fieldType:'INT',fieldValue:'12'}]}}});t.after(()=>{f.sandbox.testHooks.dropReadSession();f.remoteDoc.destroy();});let i=0;
+ const run=async(type,args={})=>{const id='expected-'+i++;await f.sandbox.testHooks.executeCommand({id,type,...args});return f.events.find(e=>e.commandId===id);};
+ await run('canvas.createApp',{nodeId:'outer',appId:'app',x:0,y:0});const before=JSON.stringify(f.remoteDoc.toJSON());
+ const inputs=[{nodeId:'263',fieldName:'text',value:'NEW_PROMPT'}],expected={prompt:'NEW_PROMPT',appInputs:inputs};
+ const preview=await run('canvas.configureApp',{nodeId:'outer',inputs,dryRun:true});assert.equal(preview.ok,true);assert.equal(preview.result.applied,false);assert.equal(JSON.stringify(f.remoteDoc.toJSON()),before);
+ const rejected=await run('canvas.preflight',{nodeId:'outer',expected});assert.equal(rejected.result.ok,false);assert.match(rejected.result.errors.join(' '),/APP_EXPECTED_PROMPT_MISMATCH/);
+ const attempt=await run('canvas.runNode',{nodeId:'outer',expected,validateParams:true});assert.equal(attempt.ok,false);assert.match(attempt.error,/APP_PREFLIGHT_FAILED/);assert.equal(f.requests.some(u=>u.endsWith('/canvas/task/run')),false);
+ await run('canvas.configureApp',{nodeId:'outer',inputs});const pre=await run('canvas.preflight',{nodeId:'outer',expected});assert.equal(pre.result.ok,true);
+ const payload=await run('canvas.runNode',{nodeId:'outer',expected,expectedDigest:pre.result.digest,validateParams:true,dryRun:true});assert.equal(payload.ok,true,payload.error);assert.equal(payload.result.request.canvas.nodes[0].data.aiApp.inputNodes[0].fieldValue,'NEW_PROMPT');
+ await run('canvas.configureApp',{nodeId:'outer',inputs:[{nodeId:'10',fieldName:'seconds',value:'13'}]});const stale=await run('canvas.runNode',{nodeId:'outer',expectedDigest:pre.result.digest,validateParams:true,dryRun:true});assert.equal(stale.ok,false);assert.match(stale.error,/EDIT_CONFLICT/);assert.equal(f.requests.some(u=>u.endsWith('/canvas/task/run')),false);
+});
+
+test('ordinary model expectations compare values and complete references and reject native-only fields',async t=>{
+ const f=workflowFixture();t.after(()=>f.remoteDoc.destroy());await f.seed();
+ await f.run('canvas.updateNodeParams',{nodeId:'blank',params:{prompt:'Saved prompt'},validateParams:true});
+ await f.run('canvas.bindReferences',{nodeId:'blank',references:[{sourceNodeId:'a',kind:'image',parameter:'refImage1'}]});
+ const pre=(await f.run('canvas.preflight',{nodeId:'blank'})).result;
+ assert.equal((await f.run('canvas.preflight',{nodeId:'blank',expected:{params:{duration:'6'},references:pre.references}})).result.ok,true);
+ for(const expected of [{params:{duration:'7'}},{references:[]},{appInputs:[{nodeId:'263',fieldName:'text',value:'x'}]},{promptField:{nodeId:'263',fieldName:'text'}}])assert.equal((await f.run('canvas.preflight',{nodeId:'blank',expected})).result.ok,false);
+ assert.equal(f.requests.some(u=>u.endsWith('/canvas/task/run')),false);
+});

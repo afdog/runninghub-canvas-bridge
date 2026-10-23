@@ -38,3 +38,31 @@ test('live health reader uses bounded loopback requests and refuses remote hosts
  assert.equal(await readTunnelHealth({ui_url:`http://127.0.0.1:${redirect.address().port}/ui`}),null);assert.equal(seen.length,1);
  assert.equal(await readTunnelHealth({ui_url:base},{fetchImpl:async()=>new Response('x'.repeat(256*1024+1))}),null);
 });
+
+function recoverable(time,{active=0,depth=0,delivery=0,lastSuccess=1000,instance='runtime-a'}={}){
+ const h=health(time,{last_success:new Date(lastSuccess).toISOString(),consecutive_failures:5});h.runtime={instance_id:instance,started_at:new Date(0).toISOString()};
+ h.components.dispatcher={details:{active}};h.components.queue={details:{depth}};h.components['response-delivery']={details:{in_progress:delivery}};return h;
+}
+test('confirmed stale idle tunnel stops the old alias before reconnect, with serialized ticks and a retry ceiling',async()=>{
+ let time=200000,alive=true,stops=0,connections=0,instance=0,healthy=false;const events=[];
+ const watcher=createTunnelSupervisor({now:()=>time,status:async()=>({process_running:alive,healthy:true,ready:true,health_snapshot:healthy?health(time):recoverable(time,{instance:'r-'+instance})}),stop:async()=>{stops++;alive=false;},connect:async()=>{assert.equal(alive,false);connections++;instance++;alive=true;},canRestart:async()=>true,report:e=>events.push(e.state)});
+ await watcher.tick();assert.equal(stops,0);time+=30000;await Promise.all([watcher.tick(),watcher.tick()]);assert.equal(stops,1);assert.equal(connections,1);
+ for(let i=0;i<8;i++){time+=65000;await watcher.tick();}assert.equal(stops,3);assert.equal(connections,3);assert.equal(events.at(-1),'restart-limit-reached');
+ healthy=true;await watcher.tick();assert.equal(events.at(-1),'polling');healthy=false;time+=120000;await watcher.tick();time+=31000;await watcher.tick();assert.equal(stops,4);
+});
+test('uncertain health, recent network failures and busy cloud or bridge work never trigger a restart',async()=>{
+ let time=200000,stops=0,current=recoverable(time),idle=true;const watcher=createTunnelSupervisor({now:()=>time,status:async()=>({process_running:true,healthy:true,ready:true,health_snapshot:current}),stop:async()=>{stops++;},connect:async()=>assert.fail('must not connect'),canRestart:async()=>idle});
+ for(const options of [{active:1},{depth:1},{delivery:1}]){current=recoverable(time,options);await watcher.tick();time+=31000;current=recoverable(time,options);await watcher.tick();}
+ current=recoverable(time);idle=false;await watcher.tick();time+=31000;current=recoverable(time);await watcher.tick();assert.equal(stops,0);
+ idle=true;current=recoverable(time,{lastSuccess:time-10000});await watcher.tick();time+=60000;current=recoverable(time,{lastSuccess:time-10000});await watcher.tick();
+ current={};time+=600000;await watcher.tick();assert.equal(stops,0);
+});
+test('a recovered or replaced runtime during idle checks is not stopped; failed stop never starts a duplicate',async()=>{
+ let time=200000,reads=0,stops=0,connections=0;const watcher=createTunnelSupervisor({now:()=>time,status:async()=>{reads++;return {process_running:true,healthy:true,ready:true,health_snapshot:reads===3?health(time):recoverable(time)};},stop:async()=>{stops++;},connect:async()=>{connections++;},canRestart:async()=>true});
+ await watcher.tick();time+=31000;await watcher.tick();assert.equal(stops,0);
+ reads=100;time+=31000;await watcher.tick();time+=31000;await watcher.tick();assert.equal(stops,1);assert.equal(connections,0);
+});
+test('sleep/wake gap alone is not a restart signal and a dead runtime keeps bounded reconnect backoff',async()=>{
+ let time=200000,current=health(time),connections=0,alive=true;const watcher=createTunnelSupervisor({now:()=>time,status:async()=>({process_running:alive,healthy:true,ready:true,health_snapshot:current}),stop:async()=>assert.fail('healthy wake must not stop'),connect:async()=>{connections++;},canRestart:async()=>true});
+ await watcher.tick();time+=3600000;current=health(time);await watcher.tick();assert.equal(connections,0);alive=false;await watcher.tick();await watcher.tick();assert.equal(connections,1);
+});

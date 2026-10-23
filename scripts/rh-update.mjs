@@ -101,6 +101,10 @@ async function ready(config,version,services){
         const r=await jsonFetch(`http://127.0.0.1:${remote.port||18766}/health`,{signal:AbortSignal.timeout(2000)});
         if(!r.ok||r.service!=='runninghub-remote-mcp'||(r.version!==version && !(compareVersions(version,'0.9.0')<0 && !r.version)))throw Error('GATEWAY_NOT_READY');
       }
+      for(const service of services.filter(s=>s.kind==='secure-tunnel')){
+        const state=JSON.parse(await run(service.node,[service.manager,'status','--config',service.configPath]));
+        if(state.process_running!==true||state.healthy!==true||state.ready!==true)throw Error('TUNNEL_NOT_READY');
+      }
       return;
     }catch{await delay(500);}
   }

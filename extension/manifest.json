@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RunningHub Canvas Bridge",
-  "version": "0.10.8",
+  "version": "0.10.9",
   "description": "Read and edit RunningHub infinite canvases through a local bridge.",
   "permissions": [
     "alarms",
@@ -43,7 +43,7 @@
       "world": "ISOLATED"
     }
   ],
-  "version_name": "0.10.8",
+  "version_name": "0.10.9",
   "background": {
     "service_worker": "background.js"
   }
