@@ -8,7 +8,7 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.10.8-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![Version](https://img.shields.io/badge/version-0.10.9-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
 [![MCP](https://img.shields.io/badge/MCP-83_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
@@ -19,15 +19,14 @@
 
 ---
 
-## 0.10.8 更新亮点
+## 0.10.9 更新亮点
 
-| 少开页面 | 遇错知道下一步 | 减少重复读取 |
+| 原生应用准确预检 | 隧道恢复有边界 | 升级沿用现有授权 |
 | :--- | :--- | :--- |
-| 复用已开与加载中的页面，合并同画布并发连接 | 超时统一查询原回执，页面断开仍可恢复 | 模型和应用参数缓存 30 秒，支持主动刷新 |
-| 默认沿用已有浏览器来源，明确指定仍优先 | 永久历史冲突停止重试，修复后可显式恢复 | 按输入、输出或历史读取节点，完整提示词保留 |
-| 多对话保留各自请求编号和画布范围 | 返回具体恢复工具与参数，避免反复调用失败工具 | 生成只校验目标及真实依赖，减少无关编辑阻塞 |
+| 逐项核对已保存的提示词、参数和实际参考绑定 | 持续失联且空闲时才重启原连接，连续失败最多三次 | 跨平台管理现有隧道，保留身份、密钥和网络设置 |
+| 多文本字段明确指定输入，dry-run 中未保存的新值会被检出 | 短暂断网和执行中的任务保持原状态，不重放请求 | 自动更新纳入本安装拥有的运行中隧道 |
 
-升级保留现有配置和 OAuth 授权，继续提供 **83 个工具**。同一 P 复用原应用、保留原生历史和行列排版规则继续生效。详见 [完整更新说明](docs/releases/0.10.8.md)。
+继续提供 **83 个工具**，保留页面复用、同一 P 复用原应用、原生历史和行列排版。ChatGPT 专用隧道可部署在常开电脑，Mac 合盖后仍由该电脑提供服务。详见 [完整更新说明](docs/releases/0.10.9.md)。
 
 ## 从对话到画布
 
@@ -123,10 +122,10 @@ rh_canvas_summary / rh_get_node  检查需要的内容
 | 节点历史 | 原生历史读取与自动同步；301 冲突可显式原地修复，保留真实历史、当前媒体及输入 |
 | 工具 | 83 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 0.10.8：macOS 212 项通过、2 项 Windows 专用跳过；Windows 完整 214 项通过。跨平台 CI 记录见 Actions |
+| 自动测试 | 0.10.9：macOS 231 项通过、2 项 Windows 专用跳过；Windows 完整 233 项通过。跨平台 CI 记录见 Actions |
 | 免费媒体处理 | 已实测浏览器截帧、图片裁剪、保存回读，以及本地 FFmpeg 处理；付费路径已验证未授权时拒绝提交 |
-| Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
-| 远程 HTTP 接口 | 0.10.8 公网 OAuth、刷新授权、83 工具发现、画布读取、并发连接复用和原回执恢复通过；Gemini / Grok 的已验证接入步骤见远程指南 |
+| Windows | 已实测后台服务、原生输入预检、公网 OAuth、刷新授权，以及迁移后的 ChatGPT 插件读取 |
+| 远程 HTTP 接口 | 0.10.9 公网 OAuth、刷新授权、83 工具发现、画布读取、并发连接复用和原回执恢复通过；Gemini / Grok 的已验证接入步骤见远程指南 |
 | 生成与取消 | 已实现；本轮验证了应用生成预检和请求预览，未额外提交付费生成或现场取消任务 |
 | 预览 | 返回媒体资源链接；客户端是否内联播放取决于宿主支持 |
 | 中国站 | 保留地址与协议适配；本版现场验收以国际站为主 |

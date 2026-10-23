@@ -29,7 +29,8 @@ Only recognized **running** managed services are restarted:
 
 - Windows: the per-user bridge service (`service.json`, `service.pid`, `start-bridge.vbs`). For installations launched by an interactive Scheduled Task, supply `--bridge-task "RunningHub Canvas Bridge"`.
 - Windows remote deployment: a `remote-runtime/runtime.json` supervisor using the existing PID/stop/launcher contract; `--remote-task` selects its Scheduled Task (default `RunningHub Remote MCP`). The service must belong to this installation. A gateway managed differently needs service integration before unattended upgrades.
-- macOS: loaded LaunchAgents `cn.runninghub.canvas-bridge` and `cn.runninghub.remote-mcp` whose definitions point to this installation. Stopped or login-disabled services are not enabled. The independent tunnel process is left alone.
+- macOS: loaded LaunchAgents `cn.runninghub.canvas-bridge` and `cn.runninghub.remote-mcp` whose definitions point to this installation. Stopped or login-disabled services are not enabled. Independently managed tunnel processes are left alone.
+- macOS / Windows Secure MCP Tunnel (0.10.9+): an existing running alias configured in `~/.runninghub-canvas-bridge/chatgpt-tunnel/config.json`, owned by this installation. The portable manager stops the old runtime and reconnects after bridge readiness, retaining its tunnel identity, credential references and saved environment. Stopped aliases stay stopped; aliases belonging to a different runtime copy require their own deployment procedure.
 
 Private configuration and OAuth state remain in `~/.runninghub-canvas-bridge/`, outside the application. Existing generation settings, browser login, access and refresh grants, archive bindings, download records and service environment are retained. The updater does not change the public hostname or request fresh client authorization. Existing token expiration and revocation still apply.
 
@@ -42,6 +43,12 @@ Before changing files, a durable transaction records the previous code. Health c
 The initial move from an older release to this updater requires a one-time installation/reload. Starting with this version, the extension checks the installed manifest against the bridge and calls the browser's [runtime.reload API](https://developer.chrome.com/docs/extensions/reference/api/runtime#method-reload) when its registered files have changed and the bridge is idle. It does not open or refresh production canvas pages. An older already-loaded extension needs **one manual reload** to activate this mechanism. New browser permissions, browser-specific restrictions, or an extension loaded from another directory can still require user action.
 
 Page runtimes already detect and load updated runtime code. Remote MCP uses the restarted gateway immediately. A stdio MCP process launched by an external client may need that client's restart/reconnect to load new code. Client-side tool-list caches may require a new conversation or refresh; updating server code does not imply every client's cache has refreshed. Canvas scopes may expire after a service restart and should be selected again by exact canvas URL. Account authorization need not be recreated for an ordinary upgrade.
+
+## Upgrading to 0.10.9
+
+The tool count remains 83. Reconnect an existing stdio client or refresh its catalogue for typed native application expectations (`appInputs`, `promptField` and complete media references). The preflight compares saved values and resolved bindings; a parameter dry-run is not applied. Failed preflights return `digest: null`.
+
+Use the [existing-tunnel manager setup](../AGENT_INSTALL.md) to include an installation-owned ChatGPT alias in upgrades. Moving a tunnel to an always-on host preserves its existing identity and credentials; stop the old host's alias before starting the new one. File paths used by remote tools refer to the new execution host. The optional watchdog recovery restarts only a confirmed stale, idle runtime and stops after three consecutive attempts until healthy polling resumes. It never resubmits canvas operations.
 
 ## Upgrading to 0.10.8
 

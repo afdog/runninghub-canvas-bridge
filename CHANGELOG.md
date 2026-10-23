@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.10.9 — native expectations and tunnel recovery (not yet published)
+## 0.10.9 — 2026-10-23 — native expectations and tunnel recovery
 
 - Validate native app expected prompt, exact internal input values, binding sources, saved settings and complete media reference mappings. Reject ambiguous or unsupported expectations. Preflight and run use the same checks; failed preflights return no usable digest. Dry-runs remain unapplied.
 - Add bounded, idle-only recovery of stale Secure MCP Tunnel runtimes; keep request identity and never replay operations. Short network failures, uncertain health and active work do not trigger restarts.
 - Add a portable manager for existing tunnel aliases and include running, installation-owned aliases in automatic updates without replacing credentials or authorization.
+- Verification: macOS 231 pass / 2 Windows-only skips; Windows 233 pass. Live native-app expectations reject mismatches and accept saved values, with all 16 inputs unchanged. The existing ChatGPT tunnel was migrated to the Windows host and verified through real plugin calls; public OAuth, refresh and 83-tool discovery passed. Existing configuration and authorization retained; no generation submitted.
 
 ## 0.10.8 — 2026-10-23 — tool efficiency and bounded recovery
 
