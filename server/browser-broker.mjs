@@ -12,7 +12,7 @@ export class BrowserReceiptError extends Error {
   }
 }
 export class BrowserBroker {
-  constructor(root){this.jobs=new Map();this.providers=new Map();this.extensionVersions=new Map();this.lastSeen=0;this.root=root;if(root){mkdirSync(root,{recursive:true});for(const name of readdirSync(root).filter(n=>n.endsWith('.json'))){const j=JSON.parse(readFileSync(join(root,name),'utf8'));if(j.state==='running'){j.state='unknown';j.result={ok:false,error:'BROWSER_WRITE_OUTCOME_UNKNOWN: inspect account before any replacement request'};}this.jobs.set(j.id,j);}}}
+  constructor(root){this.jobs=new Map();this.aliases=new Map();this.providers=new Map();this.extensionVersions=new Map();this.lastSeen=0;this.root=root;if(root){mkdirSync(root,{recursive:true});for(const name of readdirSync(root).filter(n=>n.endsWith('.json'))){const j=JSON.parse(readFileSync(join(root,name),'utf8'));if(j.state==='running'){j.state='unknown';j.result={ok:false,error:'BROWSER_WRITE_OUTCOME_UNKNOWN: inspect account before any replacement request'};}this.jobs.set(j.id,j);}}}
   persist(j){if(!this.root||j.args.action!=='manageCanvas')return;const p=join(this.root,j.id+'.json');writeFileSync(p+'.tmp',JSON.stringify(j),{mode:0o600});renameSync(p+'.tmp',p);}
   status(){return {recovery:{stableBrowserIds:true},extensionVersions:[...this.extensionVersions].filter(([,v])=>Date.now()-v.lastSeen<45000).map(([,v])=>({browserSource:v.browserSource,instanceId:v.instanceId,version:v.version,fingerprint:v.fingerprint||null})),presentationPolicy:'connect-by-default-v1',providers:[...this.providers].filter(([,t])=>Date.now()-t<45000).map(([source])=>source),connected:Date.now()-this.lastSeen<45000,pending:[...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length};}
   enqueue(input){
@@ -35,14 +35,20 @@ export class BrowserBroker {
       }
     }
     if(input.action==='manageCanvas'){if(!['createCanvas','renameCanvas','createFolder','renameFolder','moveCanvas'].includes(input.operation))throw new Error('BROWSER_OPERATION_INVALID');if(!/^[\w-]{8,128}$/.test(input.requestId||''))throw new Error('REQUEST_ID_REQUIRED');args.operation=input.operation;args.body=input.body;args.dryRun=input.dryRun===true;}
+    const id=browserRequestId({...input,origin:args.origin}),canonicalId=this.aliases.get(id)||id,prior=this.jobs.get(canonicalId);
+    if(prior){if(JSON.stringify(prior.args)!==JSON.stringify(args))throw new Error('BROWSER_REQUEST_CONFLICT');return {id:canonicalId};}
+    if(args.action==='openCanvas' && args.intent==='connect'){
+      const shared=[...this.jobs.values()].find(j=>['queued','running'].includes(j.state)&&JSON.stringify(j.args)===JSON.stringify(args));
+      if(shared){this.aliases.set(id,shared.id);return {id:shared.id};}
+    }
     if([...this.jobs.values()].filter(j=>['queued','running'].includes(j.state)).length>=100)throw new Error('BROWSER_QUEUE_FULL');
-    const id=browserRequestId({...input,origin:args.origin});const prior=this.jobs.get(id);if(prior){if(JSON.stringify(prior.args)!==JSON.stringify(args))throw new Error('BROWSER_REQUEST_CONFLICT');return {id};}const job={id,args,created:Date.now(),state:'queued'};this.jobs.set(id,job);this.persist(job);return {id};
+    const job={id,args,created:Date.now(),state:'queued'};this.jobs.set(id,job);this.persist(job);return {id};
   }
   poll(browserSource="browser-extension",extensionVersion=null,build=null,instanceId=null){
     if(/^\d+\.\d+\.\d+$/.test(extensionVersion||''))this.extensionVersions.set(browserSource+':'+String(instanceId||''),{browserSource,instanceId:typeof instanceId==='string'?instanceId.slice(0,100):null,version:extensionVersion,fingerprint:/^[a-f0-9]{64}$/.test(build||'')?build:null,lastSeen:Date.now()});
     this.providers.set(browserSource,Date.now());
     this.lastSeen=Date.now();
-    for(const [id,j] of this.jobs){if(j.args.action!=='manageCanvas'&&Date.now()-j.created>300000)this.jobs.delete(id);}
+    for(const [id,j] of this.jobs){if(j.args.action!=='manageCanvas'&&Date.now()-j.created>300000){this.jobs.delete(id);for(const [alias,target] of this.aliases)if(target===id)this.aliases.delete(alias);}}
     const job=[...this.jobs.values()].find(j=>j.state==='queued' && (!j.args.browserSource || j.args.browserSource===browserSource));
     if(!job)return null;
     job.state='running';job.provider=browserSource;job.lease=randomUUID();this.persist(job);return {id:job.id,lease:job.lease,...job.args};
@@ -72,5 +78,6 @@ export class BrowserBroker {
     }
     j.receiptFingerprint=fingerprint;j.state=j.result?.error?.includes('UNKNOWN')?'unknown':'complete';this.persist(j);return {ok:true};
   }
-  result(id){const j=this.jobs.get(id);return j?{id,state:j.state,...(j.result?{result:j.result}:{})}:{id,state:'unknown'};}
+  receiptId(id){return this.aliases.get(id)||id;}
+  result(id){const canonicalId=this.receiptId(id),j=this.jobs.get(canonicalId);return j?{id:canonicalId,state:j.state,...(j.result?{result:j.result}:{})}:{id,state:'unknown'};}
 }

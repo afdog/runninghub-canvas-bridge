@@ -27,32 +27,49 @@ async function ready(tab,createdUrl){
   }
   throw new Error('PAGE_LOAD_TIMEOUT');
 }
-const opening=new Map();
-async function handle(job){
- if(job.action!=='openCanvas')return handleRaw(job);
- if(opening.has(job.canvasUrl))return opening.get(job.canvasUrl);
- const task=handleRaw(job);opening.set(job.canvasUrl,task);try{return await task;}finally{opening.delete(job.canvasUrl);}
+// Serialize page creation per origin; pending navigations count as existing tabs.
+const creationLocks=new Map(),recentTabs=new Map();
+chrome.tabs?.onRemoved?.addListener(id=>recentTabs.delete(id));
+const tabUrl=tab=>tab.pendingUrl || tab.url || '';
+async function ensureTab(origin,url,matches,active){
+ const previous=creationLocks.get(origin)||Promise.resolve();
+ const task=previous.catch(()=>{}).then(async()=>{
+  const tabs=await chrome.tabs.query({});
+  let tab=tabs.find(t=>matches(tabUrl(t)));
+  if(!tab){
+   for(const [id,entry] of recentTabs){
+    if(Date.now()-entry.created>30000){recentTabs.delete(id);continue;}
+    if(!matches(entry.url))continue;
+    const visible=tabs.find(t=>t.id===id);
+    if(visible && tabUrl(visible) && !matches(tabUrl(visible))){recentTabs.delete(id);continue;}
+    tab=visible || entry.tab;break;
+   }
+  }
+  if(tab)return {tab,created:false};
+  tab=await chrome.tabs.create({url,active});
+  recentTabs.set(tab.id,{tab:{...tab,pendingUrl:tabUrl(tab)||url},url,created:Date.now()});
+  return {tab,created:true};
+ });
+ creationLocks.set(origin,task);
+ try{return await task;}finally{if(creationLocks.get(origin)===task)creationLocks.delete(origin);}
 }
+async function handle(job){return handleRaw(job);}
 async function handleRaw(job){
   if(job.action==='openCanvas'){
     const site=policy.parseCanvas(job.canvasUrl);if(!site)throw new Error('INVALID_CANVAS_URL');
-    const tabs=await chrome.tabs.query({url:policy.origins.map(o=>o+'/*')});
-    const existing=tabs.find(t=>policy.parseCanvas(t.url)?.key===site.key);
-    if(!existing){
-      await chrome.tabs.create({url:job.canvasUrl,active:BROWSER_SOURCE==='codex-browser' || job.focus===true});
-      // Newly created embedded tabs may not immediately support tabs.get. The
-      // manifest loads the page bridge; the MCP client waits for its real heartbeat.
-      return {ok:true,reused:false};
-    }
-    const tab=await ready(job.focus?await chrome.tabs.update(existing.id,{active:true}):existing);
+    const found=await ensureTab(site.origin,job.canvasUrl,url=>policy.parseCanvas(url)?.key===site.key,BROWSER_SOURCE==='codex-browser' || job.focus===true);
+    if(found.created)return {ok:true,reused:false};
+    const current=job.focus?await chrome.tabs.update(found.tab.id,{active:true}):found.tab;
+    if(current.pendingUrl || current.status!=='complete')return {ok:true,reused:true,pending:true};
+    const tab=await ready(current);
     if(policy.parseCanvas(tab.url)?.key!==site.key)throw new Error('PAGE_ORIGIN_CHANGED');
     await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',files:['site-policy.js','bridge-main.js']});
-    return {ok:true,reused:Boolean(existing)};
+    return {ok:true,reused:true};
   }
   if(!['listCanvases','manageCanvas'].includes(job.action) || !policy.origins.includes(job.origin))throw new Error('BROWSER_ACTION_INVALID');
-  const tabs=await chrome.tabs.query({url:job.origin+'/*'});
   const createdUrl=job.origin+'/projects/canvas/me';
-  const tab=await ready(tabs[0] || await chrome.tabs.create({url:createdUrl,active:BROWSER_SOURCE==='codex-browser'}),tabs.length?null:createdUrl);
+  const found=await ensureTab(job.origin,createdUrl,url=>{try{return new URL(url).origin===job.origin;}catch{return false;}},BROWSER_SOURCE==='codex-browser');
+  const tab=await ready(found.tab,found.created?createdUrl:null);
   const results=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:job.action==='manageCanvas'?manageAccountCanvas:listAccountCanvases,args:[{origin:job.origin,scope:job.scope,teamId:job.teamId,operation:job.operation,body:job.body,dryRun:job.dryRun}]});
   if(!results[0]?.result)throw new Error('CANVAS_LIST_EMPTY_RESPONSE');
   return results[0].result;

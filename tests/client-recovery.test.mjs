@@ -40,3 +40,9 @@ test('bridge client retains structured rejection and route evidence',async()=>{
  const result=await b.command('canvas.runNode',{nodeId:'n'},{id:'original-run'});
  for(const key of ['submissionState','submitted','retryable','platformCode','historyRoute','nextAction'])assert.deepEqual(result[key],event[key]);
 });
+test('page opened before a connection check fails retains its browser receipt instead of reopening',async()=>{
+ const b=client();let checks=0,opens=0;
+ b.request=async path=>{if(path==='/browser/status')return{providers:['browser-extension']};if(path==='/clients'){if(checks++===0)return[];throw Error('connection reset');}throw Error(path);};
+ b.browserJob=async()=>{opens++;return{ok:true,browserSource:'browser-extension',browserRequestId:'opened-once'};};
+ const result=await b.open(b.canvasUrl);assert.equal(opens,1);assert.equal(result.opened,true);assert.equal(result.errorCode,'CANVAS_CONNECTION_PENDING');assert.equal(result.browserRequestId,'opened-once');
+});

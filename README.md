@@ -8,7 +8,7 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.10.7-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
+[![Version](https://img.shields.io/badge/version-0.10.8-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
 [![MCP](https://img.shields.io/badge/MCP-83_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
 [![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
@@ -19,14 +19,15 @@
 
 ---
 
-## 0.10.7 更新亮点
+## 0.10.8 更新亮点
 
-| 历史留在原节点 | 制作保持整洁 | 调用更顺畅 |
+| 少开页面 | 遇错知道下一步 | 减少重复读取 |
 | :--- | :--- | :--- |
-| 修复 301 历史路由冲突，保留真实任务和输出 | 同一 P 复用原应用，迭代保留原生历史 | 四个独立浏览器任务槽，减少互相等待 |
-| 修复前保存快照，后续历史继续合并同步 | 板块每行两组、组内四列，适配横竖画幅 | 长轮询、批量读取与原请求回执恢复 |
+| 复用已开与加载中的页面，合并同画布并发连接 | 超时统一查询原回执，页面断开仍可恢复 | 模型和应用参数缓存 30 秒，支持主动刷新 |
+| 默认沿用已有浏览器来源，明确指定仍优先 | 永久历史冲突停止重试，修复后可显式恢复 | 按输入、输出或历史读取节点，完整提示词保留 |
+| 多对话保留各自请求编号和画布范围 | 返回具体恢复工具与参数，避免反复调用失败工具 | 生成只校验目标及真实依赖，减少无关编辑阻塞 |
 
-本次正式版包含 0.10.4–0.10.7 的累计改进。升级保留现有配置和 OAuth 授权；已有画布的历史修复需显式预览、执行。详见 [完整更新说明](docs/releases/0.10.7.md)。
+升级保留现有配置和 OAuth 授权，继续提供 **83 个工具**。同一 P 复用原应用、保留原生历史和行列排版规则继续生效。详见 [完整更新说明](docs/releases/0.10.8.md)。
 
 ## 从对话到画布
 
@@ -100,17 +101,17 @@ npm start
 ## 一次典型调用
 
 ```text
-rh_list_canvases               查询账号目录
+已知画布 URL → rh_open_canvas → 独立 scopeId
+未知 URL 时，先 rh_list_canvases 查找
         ↓
-rh_open_canvas                静默复用目标连接，取得独立 scopeId
+rh_canvas_summary / rh_get_node  检查需要的内容
         ↓
-rh_get_layout_template        读取持久排版规范
+按当前意图选择：读取 / 配置应用 / 排版 / 生成
         ↓
-rh_canvas_summary / get_node  检查已有内容
+生成：配置与参考 → rh_preflight → rh_run_node
+排版：rh_get_layout_template → 应用排版 → 检查
         ↓
-配置节点 → 绑定素材 → preflight → run_node
-        ↓
-查询任务 → 下载结果 → 可选归档
+查询准确任务 → 下载结果 → 可选归档
 ```
 
 后续画布调用都携带自己的 `scopeId`。需要修改时打开连接须设置 `allowWrites: true`；生成使用独立的稳定 `requestId`。超时先查询原回执，不盲目重发。
@@ -122,7 +123,7 @@ rh_canvas_summary / get_node  检查已有内容
 | 节点历史 | 原生历史读取与自动同步；301 冲突可显式原地修复，保留真实历史、当前媒体及输入 |
 | 工具 | 83 个 MCP 工具，覆盖连接、编辑、媒体、任务、布局及恢复 |
 | macOS 现场验证 | 内置浏览器目录、独立页面读写、应用配置与预检、聊天附件上传、视频下载、工作流及快照恢复 |
-| 自动测试 | 0.10.7：macOS 194 项通过、2 项 Windows 专用跳过；Windows 完整 196 项通过。跨平台 CI 记录见 Actions |
+| 自动测试 | 0.10.8：macOS 212 项通过、2 项 Windows 专用跳过；Windows 完整 214 项通过。跨平台 CI 记录见 Actions |
 | 免费媒体处理 | 已实测浏览器截帧、图片裁剪、保存回读，以及本地 FFmpeg 处理；付费路径已验证未授权时拒绝提交 |
 | Windows | 已实测后台服务、浏览器目录与画布读取、公网 OAuth、刷新授权和进程恢复 |
 | 远程 HTTP 接口 | 0.10.7 公网 OAuth、刷新授权、83 工具发现、画布读取和模型查询通过；Gemini / Grok 的已验证接入步骤见远程指南 |

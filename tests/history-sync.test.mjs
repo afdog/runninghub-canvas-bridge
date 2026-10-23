@@ -20,3 +20,23 @@ test('unknown generation is not queued; generation wrapper and transient reconci
  await w.accept(record,{ok:true,result:{run:{submitted:true,task:{taskId:'real-task'}}}});await w.tick();const j=w.status()[0];assert.equal(j.taskId,'real-task');assert.equal(j.state,'waiting');assert.match(j.error,/NOT_CONNECTED/);assert.ok(j.nextAttemptAt>1);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+test('permanent conflicts are blocked once, persisted across restart, and resumed only explicitly',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'rh-history-'));let calls=0,now=1;
+ const bridgeFactory=()=>({select:async()=>{},command:async()=>{calls++;return{ok:false,requestId:'same-history-receipt',errorCode:'COMMAND_FAILED',error:'Error: HISTORY_EMBEDDED_ENTRY_CONFLICT\n at merge'};}});
+ try{
+  const w=new HistorySync({root,bridgeFactory,now:()=>now});await w.init();await w.accept({type:'canvas.runNode',nodeId:'n',canvasUrl:'https://www.runninghub.ai/project/canvas/c'},{ok:true,result:{submitted:true,task:{taskId:'t'}}});
+  await w.tick();now+=600000;await w.tick();assert.equal(calls,1);assert.equal(w.status()[0].state,'blocked');assert.equal(w.status()[0].blockedReason,'HISTORY_EMBEDDED_ENTRY_CONFLICT');
+  const restored=new HistorySync({root,bridgeFactory,now:()=>now});await restored.init();await restored.tick();assert.equal(calls,1);
+  await restored.resume({canvasUrl:'https://www.runninghub.ai/project/canvas/other',nodeId:'n'});await restored.tick();assert.equal(calls,1);
+  await restored.resume({canvasUrl:'https://www.runninghub.ai/project/canvas/c',nodeId:'n',taskId:'t'});await restored.tick();assert.equal(calls,2);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('transient retries have a budget and old conflicting jobs stop before another command',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'rh-history-'));let now=1,calls=0;
+ try{
+  const w=new HistorySync({root,maxFailures:2,now:()=>now,bridgeFactory:()=>({select:async()=>{},command:async()=>{calls++;throw Error('fetch failed');}})});await w.init();
+  const j=await w.accept({type:'canvas.runNode',nodeId:'n',canvasUrl:'https://www.runninghub.ai/project/canvas/c'},{ok:true,result:{submitted:true,task:{taskId:'t'}}});await w.tick();now+=600000;await w.tick();now+=600000;await w.tick();assert.equal(calls,2);assert.equal(j.state,'blocked');
+  j.state='waiting';j.error='COMMAND_FAILED';j.failureReceipt={ok:false,requestId:'older-receipt',errorCode:'COMMAND_FAILED',error:'Error: HISTORY_EMBEDDED_ENTRY_CONFLICT'};await w.save(j);
+  const restored=new HistorySync({root,bridgeFactory:w.bridgeFactory});await restored.init();assert.equal(restored.status()[0].state,'blocked');await restored.tick();assert.equal(calls,2);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

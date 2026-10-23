@@ -43,6 +43,14 @@ The initial move from an older release to this updater requires a one-time insta
 
 Page runtimes already detect and load updated runtime code. Remote MCP uses the restarted gateway immediately. A stdio MCP process launched by an external client may need that client's restart/reconnect to load new code. Client-side tool-list caches may require a new conversation or refresh; updating server code does not imply every client's cache has refreshed. Canvas scopes may expire after a service restart and should be selected again by exact canvas URL. Account authorization need not be recreated for an ordinary upgrade.
 
+## Upgrading to 0.10.8
+
+All 83 tools remain available. Refresh the client's tool catalogue to use `rh_get_node.view`, metadata `refresh`, optional-scope receipt recovery and explicit `resumeBlocked`. Existing configuration, OAuth clients and refresh grants are retained. A normal upgrade does not require account relinking.
+
+Historical synchronization jobs with permanent conflicts become visible as blocked instead of retrying indefinitely. Their original receipts and identities remain stored. After repairing the exact node, explicitly request `resumeBlocked` on `rh_sync_node_history` to resume those jobs. Upgrading does not repair or regenerate production nodes automatically.
+
+The extension update deduplicates pending page opens; page runtime code provides the metadata cache and narrower generation checks. Verify all layers through `rh_status` after updating, including separately managed ChatGPT runtime copies. Existing stdio clients may need a reconnect to load the new process; keep their current connection and credentials.
+
 ## Upgrading to 0.10.7
 
 Version 0.10.7 includes the 0.10.4–0.10.6 recovery, performance, P-node reuse and layout changes. Existing layout preferences remain intact; omitted `groupColumns` defaults to two groups per row. Installation does not reorganize a canvas or repair a node's history automatically. A recorded 301 history conflict uses the explicit preview/apply flow in [Agent quickstart](../AGENT_QUICKSTART.md).

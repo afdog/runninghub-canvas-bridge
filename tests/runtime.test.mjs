@@ -578,3 +578,31 @@ test('preserved route repair persists only history fields and a generation previ
  assert.deepEqual(f.remoteDoc.getMap('canvas').get('canvas_content').toJSON(),snapshot);assert.equal(f.payloads.some(p=>p.url.endsWith('/canvas/task/run')),false);
  const newFailure={requestId:'later-rejection',historyId:null};const blocked=await run('guard','canvas.runNode',{nodeId:'app',validateParams:true,dryRun:true,historyRouteFailure:newFailure});assert.equal(blocked.errorCode,'HISTORY_ROUTE_CONFLICT');
 });
+test('generation history lookup tolerates unrelated canvas edits but rejects changed target inputs',async t=>{
+ for(const changed of ['unrelated','target']){
+  let f,mutate=false;
+  f=fixture({allowWrites:true,generationEnabled:true,apiReply:path=>{
+   if(path==='/canvas/node-history/page'&&mutate){
+    const nodes=f.providers.at(-1).doc.getMap('canvas').get('canvas_content').get('nodes');
+    const node=nodes.toArray().find(n=>n.get('id')===changed);
+    if(changed==='target')node.get('data').set('apiKeyMode','plus');else node.get('position').set('x',500);
+   }
+  }});t.after(()=>f.remoteDoc.destroy());
+  const run=async(id,type,args)=>{await f.sandbox.testHooks.executeCommand({id,type,...args});return f.events.find(e=>e.commandId===id);};
+  await run('target-new','canvas.createNode',{config:{id:'target',type:'rh-ai',data:{aiApp:{id:'application',inputNodes:[]}}}});
+  await run('other-new','canvas.createTextNode',{config:{id:'unrelated',text:'unrelated'}});
+  mutate=true;const result=await run('preview','canvas.runNode',{nodeId:'target',validateParams:true,dryRun:true});
+  assert.equal(result.ok,changed==='unrelated',result.error);
+  if(changed==='target')assert.equal(result.errorCode,'EDIT_CONFLICT');
+  assert.equal(f.requests.some(u=>u.endsWith('/canvas/task/run')),false);
+ }
+});
+test('node projections keep full revisions and app edits return fresh revisions without another read',async t=>{
+ const f=fixture({allowWrites:true});t.after(()=>f.remoteDoc.destroy());
+ const run=async(id,type,args)=>{await f.sandbox.testHooks.executeCommand({id,type,...args});const e=f.events.find(e=>e.commandId===id);assert.equal(e.ok,true,e.error);return e.result;};
+ await run('new','canvas.createNode',{config:{id:'app',type:'rh-ai',data:{aiApp:{id:'application',inputNodes:[{nodeId:'1',fieldName:'text',fieldType:'STRING',fieldValue:'完整原文'}]},nodeOutputHistory:[{sample:'history'}],bridgeHistoryRecovery:{sample:'large-recovery'},output:[{url:'https://example.test/result.mp4'}]}}});
+ const full=await run('full','canvas.getElement',{elementId:'app'}),inputs=await run('inputs','canvas.getElement',{elementId:'app',view:'inputs'});
+ assert.equal(inputs.revision,full.revision);assert.equal(inputs.element.data.aiApp.inputNodes[0].fieldValue,'完整原文');assert.equal(inputs.element.data.nodeOutputHistory,undefined);
+ const edited=await run('edit','canvas.configureApp',{nodeId:'app',inputs:[{nodeId:'1',fieldName:'text',value:'新的完整正文'}]});
+ const after=await run('after','canvas.getElement',{elementId:'app'});assert.equal(edited.result.revisions.app,after.revision);assert.notEqual(after.revision,full.revision);
+});

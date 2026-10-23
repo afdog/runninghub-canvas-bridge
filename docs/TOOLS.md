@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-0.10.7 共 **83** 个工具。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
+当前版本 0.10.8，仍为 **83** 个工具。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
 
 所有画布工具携带任务自己的 `scopeId`。连接、账号目录和独立下载状态等工具不需要画布 scope。参见 [调用流程](../AGENT_QUICKSTART.md)。
 
@@ -128,7 +128,7 @@ Local FFmpeg and browser pixel operations use no RunningHub generation credits. 
 
 `rh_status` and `rh_diagnose` include `deployment.backend`, `deployment.mcp`, `deployment.extension`, `deployment.runtime`, and targeted `nextActions`. Backend/MCP build metadata compares the loaded code against files on disk, even when package versions match. The MCP record includes its current catalogue count and fingerprint; older extensions report a version with an unknown fingerprint until reloaded. No configuration values or OAuth tokens are included.
 
-After an ambiguous command submission, keep `requestId` and use `rh_command_result` / `rh_recover_command`. Browser jobs return `browserRequestId` for `rh_browser_result`. Connection recovery reads receipts only. A quarantined command ID cannot be reused automatically. Terminal read receipts expire after 24 hours or above 2,000 entries; edit/generation and unknown receipts remain.
+After an ambiguous command submission or service restart, use `rh_command_result` with the original wire `requestId`. `rh_recover_command` is a compatibility alias; no live browser is required. Browser jobs return `browserRequestId` for `rh_browser_result`. Connection recovery reads receipts only. A quarantined command ID cannot be reused automatically. Terminal read receipts expire after 24 hours or above 2,000 entries; edit/generation and unknown receipts remain.
 
 Failed composed reads return `isError: true` with the original structured receipt (`requestId`, `errorCode`, and `submissionState` when unknown); downstream edits are not attempted. Browser receipt transport retries temporary failures, while a terminal rejection frees the worker and leaves the original job available for inspection. A late result for a durable account operation is accepted only with its saved original lease.
 
@@ -144,3 +144,12 @@ For a recorded 301 rejection, preview `rh_sync_node_history` with `repairRoute: 
 Non-temporary projects use canvas-native applications. One P keeps one node and its native history across every revision; project tests are not automatically temporary. Find the existing node first. `rh_create_app` and `rh_configure_app` accept a stable `productionKey` (for example `EP01/P001`); create reuses matching identities and returns the actual `nodeId` plus `reused`. Copies clear that identity. Conflicts leave existing nodes intact; do not merge histories or borrow an index.
 
 `rh_set_layout_template.options.groupColumns` controls sections per row (default 2); `maxColumns` controls P columns inside each section (default 4). The planner aligns section rows, wraps downward, sizes media by its real aspect, and moves a whole row around obstacles. Existing preferences retain their stored geometry and inherit missing defaults. Same-P iteration results remain in native history rather than new cards. A rejected attempt does not authorize deleting its reusable P app or its history.
+
+
+## Efficiency and recovery updates (unreleased)
+
+- Connection: use `rh_open_canvas` for a known URL, preserving the explicit browser or reusing its existing provider. Loading pages are reused. `CANVAS_CONNECTION_PENDING` keeps the original opening receipt.
+- Recovery: `rh_command_result` works for timeouts and restarts, with no browser dependency for a returned wire receipt ID. Supply the original `canvasUrl` for logical IDs. `rh_recover_command` is the compatibility alias.
+- Read: `rh_get_node.view` selects full, inputs, outputs or history; prompts remain complete and revisions retain full-node semantics. Model/app schemas support `refresh` and a 30-second account/team-scoped cache.
+- Errors: `recovery` names the next read/connection tool, available arguments, missing inputs and stopping conditions. It never authorizes generation.
+- History: blocked background jobs are visible in `rh_status.historySync`. After an explicit successful repair, `rh_sync_node_history.resumeBlocked` resumes matching jobs without generating.

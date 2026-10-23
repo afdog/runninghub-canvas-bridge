@@ -40,3 +40,30 @@ test('decode failure reports unresolved media instead of treating old node dimen
  const result=await l.resolveMediaSizes({nodes:[node]},['x']);assert.equal(result.sizes.x,undefined);assert.deepEqual([...result.unresolved],['x']);assert.equal(l.aspect(node).source,'parameters');
  node.data.output=[{url:'https://example.invalid/known.mp4',width:1080,height:1920}];const known=await l.resolveMediaSizes({nodes:[node]},['x']);assert.equal(known.sizes.x.height,1920);
 });
+test('execution revisions include real upstream bindings but ignore layout and unrelated work',async()=>{
+ const ctx={crypto:webcrypto,TextEncoder};vm.runInNewContext(featureSource,ctx);const f=ctx.RHCanvasFeatures;
+ const s={nodes:[{id:'app',position:{x:1,y:2},data:{aiApp:{inputNodes:[{binding:{sourceNodeId:'ref'}}]}}},{id:'ref',data:{output:[{url:'https://example.test/a.png'}]}},{id:'other',data:{status:'running'}}],edges:[{id:'ref-app',source:'ref',target:'app'}]};
+ const before=f.canonical(f.executionState(s,'app'));s.nodes[2].data.status='finished';s.nodes[0].position.x=30;assert.equal(f.canonical(f.executionState(s,'app')),before);
+ s.nodes[1].data.output[0].url='https://example.test/b.png';assert.notEqual(f.canonical(f.executionState(s,'app')),before);
+ s.nodes[1].data.output[0].url='https://example.test/a.png';s.edges=[];assert.notEqual(f.canonical(f.executionState(s,'app')),before);
+});
+test('metadata reads coalesce, expire, refresh and isolate account contexts without sharing mutable results',async()=>{
+ const ctx={crypto:webcrypto,TextEncoder};vm.runInNewContext(featureSource,ctx);let calls=0,now=0,account='A',fail=false;
+ const api=async()=>{calls++;if(fail)throw Error('offline');return [{type:'TEXT_VIDEO',modelList:[{modelCode:'fixture',config:[{paramName:'prompt',paramValue:'initial'}]}]}];};
+ const f=ctx.RHCanvasFeatures.create({api,now:()=>now,getMetadataContext:()=>account,metadataTtlMs:100});
+ const args={modelCode:'fixture',types:['TEXT_VIDEO']};
+ const [first,second]=await Promise.all([f.modelSchema(args),f.modelSchema(args)]);assert.equal(calls,1);assert.equal(second.cache.hit,true);first.models[0].parameters[0].raw.paramValue='mutated';
+ assert.equal((await f.modelSchema(args)).models[0].parameters[0].raw.paramValue,'initial');assert.equal(calls,1);
+ await f.modelSchema({...args,refresh:true});assert.equal(calls,2);now=200;await f.modelSchema(args);assert.equal(calls,3);
+ account='B';await f.modelSchema(args);assert.equal(calls,4);fail=true;await assert.rejects(f.modelSchema({...args,refresh:true}));fail=false;await f.modelSchema(args);assert.equal(calls,6);
+});
+test('metadata in flight is rejected when the account or team changes',async()=>{
+ const ctx={crypto:webcrypto,TextEncoder};vm.runInNewContext(featureSource,ctx);let context='A',finish;
+ const f=ctx.RHCanvasFeatures.create({api:()=>new Promise(r=>finish=r),getMetadataContext:()=>context});
+ const pending=f.listModels({types:['video']});await Promise.resolve();context='B';finish([]);await assert.rejects(pending,/METADATA_CONTEXT_CHANGED/);
+});
+test('input projection retains complete prompt text without expanding saved history',()=>{
+ const ctx={};vm.runInNewContext(featureSource,ctx);const f=ctx.RHCanvasFeatures;
+ const node={id:'n',data:{params:{prompt:'完整对白'.repeat(2000)},output:[{url:'result'}],nodeOutputHistory:[{old:true}],bridgeHistoryRecovery:{privateHistory:true}}};
+ const projected=f.nodeView(node,'inputs');assert.equal(projected.data.params.prompt,node.data.params.prompt);assert.equal(projected.data.nodeOutputHistory,undefined);assert.equal(projected.data.bridgeHistoryRecovery,undefined);assert.equal(f.nodeView(node,'outputs').data.output[0].url,'result');assert.equal(f.nodeView(node,'full'),node);
+});

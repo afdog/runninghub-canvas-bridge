@@ -155,7 +155,7 @@ test('MCP transports stable P identity and group-row options without creating an
 
 test('model discovery accepts common categories and exact modes; recovery returns the original structured rejection',async t=>{
  const calls=[],failure={ok:false,errorCode:'HISTORY_ROUTE_CONFLICT',submitted:false,submissionState:'rejected',retryable:false,platformCode:301,historyRoute:{historyId:'owned'}};
- const server=createMcpServer({command:async(type,args)=>{calls.push({type,args});return {result:{models:[]}};},request:async()=>failure});
+ const server=createMcpServer({canvasUrl:'https://www.runninghub.ai/project/canvas/fixture',command:async(type,args)=>{calls.push({type,args});return {result:{models:[]}};},request:async()=>({record:{canvasUrl:'https://www.runninghub.ai/project/canvas/fixture',state:'completed'},result:failure})});
  const client=new Client({name:'model-alias',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);t.after(async()=>{await client.close();await server.close();});
  for(const types of [['video'],['VIDEO'],['image-video','text_video',' video ']])assert.notEqual((await client.callTool({name:'rh_list_models',arguments:{types}})).isError,true);
  assert.ok(calls[0].args.types.includes('MULTIMODAL_VIDEO'));assert.ok(calls[0].args.types.includes('VIDEO_EDIT'));assert.ok(!calls[0].args.types.includes('VIDEO'));assert.deepEqual(calls[0].args.types,calls[1].args.types);assert.equal(new Set(calls[2].args.types).size,calls[2].args.types.length);

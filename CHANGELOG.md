@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.8 — 2026-10-23 — tool efficiency and bounded recovery
+
+- Reuse pending canvas/directory tabs and coalesce concurrent same-canvas connection jobs while retaining every caller receipt. Default connections reuse an existing provider; an explicitly requested browser remains authoritative.
+- Stop permanent history synchronization conflicts, bound transient retries and waiting time, and show blocked jobs in status. Explicit successful synchronization can resume the exact blocked node/task with `resumeBlocked`. Existing job receipts are retained.
+- Make `rh_command_result` the common recovery entry across timeouts/restarts. Returned wire receipt IDs work without a live canvas; logical IDs require the original canvas URL. `rh_recover_command` remains compatible.
+- Validate generation against the target and its actual upstream dependencies instead of unrelated canvas edits; retain final input/history checks and spending authorization.
+- Return structured error recovery guidance, consolidate preferred tool descriptions, and keep all 83 tools available.
+- Cache model/app metadata for 30 seconds per page/account/team, coalesce identical requests, and support `refresh`. Add node `view` projections without truncating prompts; app edits return fresh revisions. Build diagnostics reuse hashes when file identities/timestamps remain unchanged.
+
 ## 0.10.7 — 2026-10-22 — preserving native history
 
 This stable release includes the previously unpublished 0.10.4–0.10.6 changes below. See the [release summary and upgrade guide](docs/releases/0.10.7.md).

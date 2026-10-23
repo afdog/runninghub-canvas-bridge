@@ -1,5 +1,5 @@
 import {readFileSync,readdirSync} from 'node:fs';
-import {readFile,readdir} from 'node:fs/promises';
+import {readFile,readdir,stat} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 const ROOT=new URL('../',import.meta.url);
 export const EXTENSION_FILES=['background.js','bridge-main.js','browser-pump.js','keepalive.js','site-policy.js'];
@@ -12,10 +12,17 @@ export function captureBuild(root=ROOT){
  return {version:JSON.parse(parts[0][1]).version,fingerprint:hash(parts)};
 }
 export const ACTIVE_BUILD=captureBuild();
+const diskBuilds=new Map();
 export async function inspectBuild(active=ACTIVE_BUILD,root=ROOT){
- const files=codeNames(await readdir(new URL('server/',root))),parts=await Promise.all(files.map(async name=>[name,await readFile(new URL(name,root),'utf8')]));
- const disk={version:JSON.parse(parts[0][1]).version,fingerprint:hash(parts)};
- return {active,disk,needsRestart:active.fingerprint!==disk.fingerprint};
+ const files=codeNames(await readdir(new URL('server/',root)));
+ const signature=JSON.stringify(await Promise.all(files.map(async name=>{const s=await stat(new URL(name,root),{bigint:true});return [name,String(s.size),String(s.ino),String(s.mtimeNs),String(s.ctimeNs)];})));
+ const key=String(root),prior=diskBuilds.get(key);let pending=prior?.signature===signature?prior.promise:null;
+ if(!pending){
+  pending=Promise.all(files.map(async name=>[name,await readFile(new URL(name,root),'utf8')])).then(parts=>({version:JSON.parse(parts[0][1]).version,fingerprint:hash(parts)}));
+  diskBuilds.set(key,{signature,promise:pending});if(diskBuilds.size>32)diskBuilds.delete(diskBuilds.keys().next().value);
+ }
+ try{const disk=await pending;return {active,disk,needsRestart:active.fingerprint!==disk.fingerprint};}
+ catch(error){if(diskBuilds.get(key)?.promise===pending)diskBuilds.delete(key);throw error;}
 }
 export async function extensionBuild(root=ROOT){
  const parts=await Promise.all(EXTENSION_FILES.map(async name=>[name,(await readFile(new URL('extension/'+name,root),'utf8')).replaceAll('codex-browser','browser-extension')]));

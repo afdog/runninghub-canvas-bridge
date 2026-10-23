@@ -35,6 +35,8 @@
   const errorCodeFromError = (error) => {
     if(['HISTORY_ROUTE_CONFLICT','RUN_REJECTED','COMMAND_OUTCOME_UNKNOWN','MODEL_TYPES_INVALID'].includes(error?.code))return error.code;
     const message = String(error?.message || error || "");
+    const explicit=message.match(/^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?=[:\s]|$)/)?.[1];
+    if(explicit)return explicit;
     if(message.startsWith('MODEL_TYPES_INVALID'))return 'MODEL_TYPES_INVALID';
     if (message.startsWith("CANVAS_WRITE_OUTCOME_UNKNOWN")) return "CANVAS_WRITE_OUTCOME_UNKNOWN";
     if (/Node not found|Element not found/i.test(message)) return "NODE_NOT_FOUND";
@@ -1245,20 +1247,20 @@
     });
   };
 
-  const getElement = async ({ elementId, id = elementId } = {}) => {
+  const getElement = async ({ elementId, id = elementId, view = 'full' } = {}) => {
     id = elementId || id;
     if (!id) throw new Error("id is required");
     return withCanvasYjs(async ({ nodes, edges, canvasId }) => {
       const snapshot={nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)};
       const node = snapshot.nodes.find((item) => item?.id === id);
-      if (node) return { canvasId, kind: "node", element: node, revision:await FEATURES.revision(snapshot,id) };
+      if (node) return { canvasId, kind: "node", element: FEATURES.nodeView(node,view), view, revision:await FEATURES.revision(snapshot,id) };
       const edge = yArrayToJson(edges).find((item) => item?.id === id);
       if (edge) return { canvasId, kind: "edge", element: edge };
       throw new Error(`Element not found: ${id}`);
     });
   };
 
-  const getElements = async ({ elementIds = [], nodeIds = [] } = {}) => {
+  const getElements = async ({ elementIds = [], nodeIds = [], view = 'full' } = {}) => {
     const ids = [...new Set((elementIds?.length ? elementIds : nodeIds).map((id) => String(id || "")).filter(Boolean))];
     if (!ids.length || ids.length > 100) throw new Error("NODE_IDS_REQUIRED");
     return withCanvasYjs(async ({ nodes, edges, canvasId }) => {
@@ -1267,7 +1269,7 @@
       const missing = [];
       for (const id of ids) {
         const node = FEATURES.indexedNode(snapshot,id);
-        if (node) found.push({ id, kind: "node", element: node, revision: await FEATURES.revision(snapshot, id) });
+        if (node) found.push({ id, kind: "node", element: FEATURES.nodeView(node,view), view, revision: await FEATURES.revision(snapshot, id) });
         else {
           const edge = FEATURES.indexedEdge(snapshot,id);
           if (edge) found.push({ id, kind: "edge", element: edge });
@@ -1771,7 +1773,7 @@
     const payload = await withCanvasYjs(async ({ nodes, edges, canvasId }) => {
       const currentNodes = yArrayToJson(nodes);
       const currentEdges = yArrayToJson(edges);
-      frozenInput=FEATURES.canonical({nodes:currentNodes,edges:currentEdges});
+      frozenInput=FEATURES.canonical(FEATURES.executionState({nodes:currentNodes,edges:currentEdges},target));
       const targetNode = currentNodes.find((node) => node?.id === target);
       if (!targetNode) throw new Error(`Node not found: ${target}`);
       if (expectedNode !== undefined && FEATURES.canonical(targetNode) !== expectedNode) throw new Error("EDIT_CONFLICT: frozen processing node changed");
@@ -1779,7 +1781,7 @@
         const checked=await globalThis.RHProductionFeatures.appPreflight({nodes:currentNodes,edges:currentEdges},target);
         if(!checked.ok)throw new Error('APP_PREFLIGHT_FAILED: '+checked.errors.join('; '));
         if(expectedDigest&&checked.digest!==expectedDigest)throw new Error('EDIT_CONFLICT: app inputs changed');
-        if(FEATURES.canonical({nodes:currentNodes,edges:currentEdges})!==FEATURES.canonical({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)}))throw new Error('EDIT_CONFLICT: app graph changed during validation');
+        if(FEATURES.canonical(FEATURES.executionState({nodes:currentNodes,edges:currentEdges},target))!==FEATURES.canonical(FEATURES.executionState({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)},target)))throw new Error('EDIT_CONFLICT: app graph changed during validation');
         return {canvasId,targetType:'NODE',targetId:target,canvas:{nodes:[checked.resolvedNode],edges:[]}};
       }
       if(fields) {
@@ -1788,7 +1790,7 @@
         const checked=await featureTools.preflightSnapshot(snapshot,{nodeId:target,expected},fields);
         if(!checked.ok) throw new Error('PREFLIGHT_FAILED: '+checked.errors.join('; '));
         if(expectedDigest && expectedDigest!==checked.digest) throw new Error('EDIT_CONFLICT: preflight digest changed');
-        if(FEATURES.canonical(snapshot)!==FEATURES.canonical({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)})) throw new Error('EDIT_CONFLICT: canvas changed during preflight');
+        if(FEATURES.canonical(FEATURES.executionState(snapshot,target))!==FEATURES.canonical(FEATURES.executionState({nodes:yArrayToJson(nodes),edges:yArrayToJson(edges)},target))) throw new Error('EDIT_CONFLICT: canvas changed during preflight');
       }
       const validation = validateNodeRunSnapshot({ targetId: target, nodes: currentNodes, edges: currentEdges, requireReferences: validateReferences });
       if (!validation.ok) throw new Error(`Node run validation failed: ${validation.errors.join("; ")}`);
@@ -1825,7 +1827,7 @@
       delete runData.historyStorage;
     }
     await withCanvasYjs(ctx=>{
-      if(FEATURES.canonical({nodes:yArrayToJson(ctx.nodes),edges:yArrayToJson(ctx.edges)})!==frozenInput)throw Error('EDIT_CONFLICT: canvas changed while resolving history');
+      if(FEATURES.canonical(FEATURES.executionState({nodes:yArrayToJson(ctx.nodes),edges:yArrayToJson(ctx.edges)},target))!==frozenInput)throw Error('EDIT_CONFLICT: canvas changed while resolving history');
     });
     if (dryRun) return { dryRun: true, submitted: false, request: payload };
     let response;
@@ -2981,7 +2983,7 @@
 
   const platformApi = async (endpoint,body) => {
       if(endpoint==='/api/webapp/user/list')body={...body,userId:sessionUserId(sessionToken())};
-      const response=await fetch(new URL(endpoint,SITE_POLICY.parseCanvas(location.href).apiOrigin),{method:'POST',headers:authHeaders(),credentials:'include',body:JSON.stringify(body),...(['/canvas/node-history/page','/canvas/task/batchStatus'].includes(endpoint)?{signal:AbortSignal.timeout(20000)}:{})});
+      const response=await fetch(new URL(endpoint,SITE_POLICY.parseCanvas(location.href).apiOrigin),{method:'POST',headers:authHeaders(),credentials:'include',body:JSON.stringify(body),...(['/canvas/node-history/page','/canvas/task/batchStatus'].includes(endpoint)?{signal:AbortSignal.timeout(20000)}:['/canvas/model/list','/api/webapp/detail'].includes(endpoint)?{signal:AbortSignal.timeout(15000)}:{})});
       if(!response.ok) throw new Error(`PLATFORM_API_ERROR: ${response.status}`);
       const payload=await response.json();
       if(payload.code!==undefined && Number(payload.code)!==0) throw new Error(`PLATFORM_API_ERROR: ${payload.code}: ${String(payload.msg || payload.message || "").slice(0,250)}`);
@@ -2989,6 +2991,7 @@
     };
   const featureTools = FEATURES.create({
     api:platformApi,
+    getMetadataContext:()=>FEATURES.canonical([location.origin,sessionToken(),localStorage.getItem('currentTeamId')]),
     withMutation:withCanvasMutation,
     readSnapshot:()=>withCanvasYjs(ctx=>canvasSnapshotFromContext(ctx)),toYValue,getTitle:getNodeTitle
   });

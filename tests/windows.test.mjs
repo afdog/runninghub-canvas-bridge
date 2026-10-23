@@ -31,7 +31,7 @@ test('Windows service installs, restarts and uninstalls in an isolated user dire
   const {windowsService}=await import('../scripts/windows-service.mjs');
   const home=await mkdtemp(join(tmpdir(),'rh-service-用户 '));
   const {createServer}=await import('node:net');const reservation=createServer();await new Promise(r=>reservation.listen(0,'127.0.0.1',r));const port=reservation.address().port;await new Promise(r=>reservation.close(r));
-  const options={home,port,env:{...process.env,APPDATA:join(home,'AppData','Roaming'),RH_ARCHIVE_DIR:join(home,'archives'),RH_BRIDGE_ALLOW_GENERATION:'0'}};
+  const options={home,port,env:{...process.env,APPDATA:join(home,'AppData','Roaming'),RH_ARCHIVE_DIR:join(home,'archives'),RH_HISTORY_SYNC_DIR:join(home,'history'),RH_MEDIA_OPERATIONS_DIR:join(home,'media'),RH_DOWNLOAD_DIR:join(home,'downloads'),RH_BRIDGE_ALLOW_GENERATION:'0'}};
   try {
     const installed=await windowsService('install',options);assert.equal(installed.ok,true);assert.equal(installed.installed,true);
     const originalPid=installed.pid;

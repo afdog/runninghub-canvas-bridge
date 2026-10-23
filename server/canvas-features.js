@@ -17,6 +17,23 @@
   const indexedNode=(snapshot,id)=>snapshot[INDEX]?snapshot[INDEX].nodes.get(id):snapshot.nodes.find(n=>n.id===id);
   const indexedEdge=(snapshot,id)=>snapshot[INDEX]?snapshot[INDEX].edges.get(id):snapshot.edges.find(e=>e.id===id);
   const nodeState=(snapshot,id)=>({node:cleanNode(indexedNode(snapshot,id)),edges:(snapshot[INDEX]?snapshot[INDEX].byNode.get(id)||[]:snapshot.edges.filter(e=>e.source===id||e.target===id)).map(cleanNode).sort((a,b)=>String(a.id).localeCompare(String(b.id)))});
+  // Freeze only execution dependencies. Presentation edits do not change generation inputs.
+  const executionState=(snapshot,targetId)=>{
+    const index=indexSnapshot(snapshot),ids=new Set([targetId]),queue=[targetId];
+    for(let i=0;i<queue.length;i++){
+      const id=queue[i],node=indexedNode(index,id);
+      const sources=[...(index[INDEX].byNode.get(id)||[]).filter(e=>e.target===id).map(e=>e.source),...(node?.data?.aiApp?.inputNodes||[]).map(f=>f.binding?.sourceNodeId).filter(Boolean)];
+      for(const source of sources)if(!ids.has(source)){ids.add(source);queue.push(source);}
+    }
+    const relevant=node=>{
+      if(!node)return null;
+      const {position,positionAbsolute,width,height,measured,style,zIndex,selected,dragging,parentId,extent,...value}=node;
+      const data={...(value.data||{})};
+      for(const key of ['title','label','width','height','groupId','addNewGroup','opResize','imageDisplaySizeLocked'])delete data[key];
+      return {...value,data};
+    };
+    return {nodes:[...ids].sort().map(id=>({id,node:relevant(indexedNode(index,id))})),edges:snapshot.edges.filter(e=>ids.has(e.target)&&ids.has(e.source)).map(cleanNode)};
+  };
   const revision = async (snapshot,id) => {
     const bytes = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(nodeState(snapshot,id))));
     return Array.from(new Uint8Array(bytes),n=>n.toString(16).padStart(2,'0')).join('');
@@ -53,20 +70,46 @@
       return [type]; // Allow new platform modes without requiring a bridge release.
     }))];
   };
-  globalThis.RHCanvasFeatures = {normalizeModelTypes,revision,checkRevisions,canonical,nodeState,mediaUrls,indexSnapshot,indexedNode,indexedEdge,
-    create({api,withMutation,readSnapshot,toYValue,getTitle}) {
-      const assets = new Map();
-      const listModels = async ({types=DEFAULT_TYPES,query='',modelCode,includeSchema=false}={}) => {
+  const nodeView=(node,view='full')=>{
+    if(view==='full')return node;
+    if(!['inputs','outputs','history'].includes(view))throw Error('NODE_VIEW_INVALID');
+    const data={...(node.data||{})};
+    if(view==='inputs')for(const key of ['output','nodeOutputHistory','bridgeHistoryRecovery'])delete data[key];
+    else{
+      const allowed=view==='outputs'?['title','label','status','taskId','output','sourceObjects','imageUrl','videoUrl','audioUrl','selectedHistoryOutputId','selectedHistoryBatchId','selectedOutputHistoryId','selectedOutputHistoryIndex']:['title','label','historyStorage','nodeOutputHistory','bridgeHistoryRecovery','selectedHistoryOutputId','selectedHistoryBatchId'];
+      for(const key of Object.keys(data))if(!allowed.includes(key))delete data[key];
+    }
+    return {id:node.id,type:node.type,position:node.position,data};
+  };
+  globalThis.RHCanvasFeatures = {nodeView,executionState,normalizeModelTypes,revision,checkRevisions,canonical,nodeState,mediaUrls,indexSnapshot,indexedNode,indexedEdge,
+    create({api,withMutation,readSnapshot,toYValue,getTitle,getMetadataContext=()=>'',now=Date.now,metadataTtlMs=30000}) {
+      const assets = new Map(),metadataCache=new Map();let metadataContext;
+      const readMetadata=async(endpoint,body,{refresh=false}={})=>{
+        if(!['/canvas/model/list','/api/webapp/detail'].includes(endpoint))throw Error('METADATA_ENDPOINT_INVALID');
+        const context=getMetadataContext();if(context!==metadataContext){metadataCache.clear();metadataContext=context;}
+        const finish=value=>{if(getMetadataContext()!==context)throw Error('METADATA_CONTEXT_CHANGED');return {...value,data:JSON.parse(JSON.stringify(value.data))};};
+        const cacheKey=canonical([endpoint,body]),entry=metadataCache.get(cacheKey);
+        if(!refresh&&entry&&entry.expiresAt>now())return {...finish(await entry.promise),cached:true};
+        const pending={expiresAt:now()+metadataTtlMs};
+        pending.promise=Promise.resolve().then(()=>api(endpoint,body)).then(data=>{
+          if(endpoint==='/canvas/model/list'&&!Array.isArray(data)&&!Array.isArray(data?.data))throw Error('MODEL_SCHEMA_UNSUPPORTED');
+          pending.expiresAt=now()+metadataTtlMs;return {data:JSON.parse(JSON.stringify(data)),fetchedAt:now()};
+        }).catch(error=>{if(metadataCache.get(cacheKey)===pending)metadataCache.delete(cacheKey);throw error;});
+        metadataCache.set(cacheKey,pending);if(metadataCache.size>32)metadataCache.delete(metadataCache.keys().next().value);
+        return {...finish(await pending.promise),cached:false};
+      };
+      const listModels = async ({types=DEFAULT_TYPES,query='',modelCode,includeSchema=false,refresh=false}={}) => {
         types=normalizeModelTypes(types);
-        const response = await api('/canvas/model/list',{types});
+        const metadata=await readMetadata('/canvas/model/list',{types:[...types].sort()},{refresh});
+        const response=metadata.data;
         const groups = Array.isArray(response) ? response : response?.data;
         if (!Array.isArray(groups)) throw new Error('MODEL_SCHEMA_UNSUPPORTED');
         const models=groups.flatMap(g=>(g.modelList || []).map(m=>({...m,modelType:g.type})))
           .filter(m=>(!modelCode || m.modelCode===modelCode) && (!query || canonical(m).toLowerCase().includes(query.toLowerCase())));
-        return {source:'live-platform-api',fetchedAt:new Date().toISOString(),types,models:includeSchema?models:models.map(m=>({modelCode:m.modelCode,modelType:m.modelType,name:m.name,modelName:m.modelName,nameEn:m.nameEn,parameterCount:m.config?.length || 0}))};
+        return {source:'live-platform-api',fetchedAt:new Date(metadata.fetchedAt).toISOString(),cache:{hit:metadata.cached,maxAgeMs:metadataTtlMs},types,models:includeSchema?models:models.map(m=>({modelCode:m.modelCode,modelType:m.modelType,name:m.name,modelName:m.modelName,nameEn:m.nameEn,parameterCount:m.config?.length || 0}))};
       };
-      const modelSchema = async ({modelCode,types}={}) => {
-        const result=await listModels({modelCode,types,includeSchema:true});
+      const modelSchema = async ({modelCode,types,refresh=false}={}) => {
+        const result=await listModels({modelCode,types,includeSchema:true,refresh});
         if (!result.models.length) throw new Error('MODEL_NOT_FOUND: use rh_list_models and its modelType');
         return {...result,models:result.models.map(m=>({...m,parameters:(m.config || []).filter(c=>c.paramName).map(c=>({name:c.paramName,type:c.type,dataType:c.paramDataType,default:c.paramValue,options:c.optionValue,min:c.min,max:c.max,required:c.required,conditions:c.paramExt,raw:c}))}))};
       };
@@ -204,9 +247,7 @@
         if(expected.prompt!==undefined && node.data.params?.prompt!==expected.prompt) check.errors.push('prompt: differs from expected text');
         for(const [key,value] of Object.entries(expected.params || {})) if(canonical(node.data.params?.[key])!==canonical(value)) check.errors.push(`${key}: differs from expected value`);
         if(expected.references && canonical([...refs].sort((a,b)=>canonical(a).localeCompare(canonical(b))))!==canonical([...expected.references].sort((a,b)=>canonical(a).localeCompare(canonical(b))))) check.errors.push('references: differ from expected complete mapping');
-        const ids=new Set([node.id]);
-        for(let i=0;i<snapshot.nodes.length;i++) {const size=ids.size;for(const e of snapshot.edges) if(ids.has(e.target)) ids.add(e.source);if(ids.size===size)break;}
-        const graph={nodes:snapshot.nodes.filter(n=>ids.has(n.id)).map(cleanNode).sort((a,b)=>a.id.localeCompare(b.id)),edges:snapshot.edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(cleanNode).sort((a,b)=>a.id.localeCompare(b.id))};
+        const graph=executionState(snapshot,node.id);
         const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(graph)))),n=>n.toString(16).padStart(2,'0')).join('');
         return {...check,ok:check.errors.length===0,nodeId:node.id,digest,references:refs,generationTriggered:false};
       };
@@ -292,7 +333,7 @@
           return {shots:reports,positions,generationTriggered:false};
         });
       };
-      return {listModels,modelSchema,searchAssets,addAsset,inspectReferences,bindReferences,batchUpdate,prepareShots,autoLayout,validatePatch,preflight,preflightSnapshot,fieldsFor,validateParameters,referencePlan,pin};
+      return {readMetadata,listModels,modelSchema,searchAssets,addAsset,inspectReferences,bindReferences,batchUpdate,prepareShots,autoLayout,validatePatch,preflight,preflightSnapshot,fieldsFor,validateParameters,referencePlan,pin};
     }
   };
 })();

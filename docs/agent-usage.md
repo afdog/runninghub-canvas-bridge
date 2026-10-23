@@ -6,7 +6,7 @@ For repeatable black-box acceptance testing, use `docs/agent-qa-playbook.md`.
 
 ## MCP agents
 
-Codex and other MCP clients follow [AGENT_QUICKSTART.md](../AGENT_QUICKSTART.md) and the live tool descriptions. They do not have `generate-video-node` or `poll-node-result`. Validate with `rh_validate_node`, preview with `rh_run_node` `dryRun`, and submit that same request only when generation is authorized. Read results with `rh_task_status` or one `rh_node_result`. The commands below are the local CLI.
+Codex and other MCP clients follow [AGENT_QUICKSTART.md](../AGENT_QUICKSTART.md) and the live tool descriptions. They do not have `generate-video-node` or `poll-node-result`. Use `rh_preflight` for both model and application readiness, preview with `rh_run_node` `dryRun` when needed, and submit only when generation is authorized. `rh_validate_node` remains a basic ordinary-model compatibility check. Read results with `rh_task_status` or one `rh_node_result`. The commands below are the local CLI.
 
 ## Persistent project work
 
@@ -140,7 +140,7 @@ When a blocking preflight reason is present, fix that reason before sending canv
 
 A definite `HISTORY_ROUTE_CONFLICT` has `submissionState: "rejected"` and the original request/node/index evidence. Do not change the request ID and submit again. Preflight now surfaces this known conflict. Use `rh_sync_node_history` to diagnose and synchronize only a verified replacement index. If the same index remains rejected, it returns `changed: false`, `historyRoute.blocked: true` and requires the explicit preserving repair described below. It never silently clears `historyStorage`, creates a replacement P node, borrows another node’s history, or reports an unchanged pointer as repaired. The native reset flow detaches historical routing; it requires an explicit migration decision and preservation plan.
 
-Network errors, malformed responses and missing task IDs remain `submissionState: "unknown"`. Recover the original receipt with `rh_command_result` / `rh_recover_command` and inspect platform task history before any new submission.
+Network errors, malformed responses and missing task IDs remain `submissionState: "unknown"`. Recover the original receipt with `rh_command_result` for both timeouts and restarts (`rh_recover_command` is a compatibility entry) and inspect platform task history before any new submission.
 
 ### Preserve history while repairing a rejected route
 

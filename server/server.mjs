@@ -51,7 +51,7 @@ if (ACCESS_FILE) {
 }
 const CLIENT_TTL = 15000;
 const PRODUCT_NAME = "runninghub-canvas-bridge";
-const PRODUCT_VERSION = "0.10.7";
+const PRODUCT_VERSION = "0.10.8";
 const BRIDGE_PROTOCOL_VERSION = "1";
 const RUNTIME_PATH = new URL("./bridge-runtime.js", import.meta.url);
 const events = [];
@@ -264,7 +264,7 @@ const server = http.createServer(async (req, res) => {
         try{const result=browserBroker.complete(input);browserResultWaiters.notify(input.id);return json(res,200,result);}
         catch(error){if(error instanceof BrowserReceiptError)return json(res,409,error.receipt);throw error;}
       }
-      if(url.pathname==='/browser/result' && req.method==='GET'){const id=url.searchParams.get('id');await browserResultWaiters.wait(id,()=>{const j=browserBroker.result(id);return j.result?j:null;},{waitMs:url.searchParams.get('waitMs'),response:res});if(!res.destroyed)return json(res,200,browserBroker.result(id));return;}
+      if(url.pathname==='/browser/result' && req.method==='GET'){const id=url.searchParams.get('id');await browserResultWaiters.wait(browserBroker.receiptId(id),()=>{const j=browserBroker.result(id);return j.result?j:null;},{waitMs:url.searchParams.get('waitMs'),response:res});if(!res.destroyed)return json(res,200,browserBroker.result(id));return;}
     }
     if(/^\/media-approval\/[0-9a-f-]{36}$/.test(url.pathname)){
       const id=url.pathname.split('/').at(-1);
@@ -298,6 +298,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await mediaTickets.create(input.filePath, canvas.origin));
     }
     if(url.pathname==='/history-sync' && req.method==='GET')return json(res,200,{jobs:historySync.status()});
+    if(url.pathname==='/history-sync/resume' && req.method==='POST'){const input=JSON.parse(await readBody(req));if(!SITE_POLICY.parseCanvas(input.canvasUrl)||typeof input.nodeId!=='string')return json(res,400,{error:'HISTORY_TARGET_REQUIRED'});return json(res,200,await historySync.resume(input));}
     if (url.pathname === '/archives/binding' && req.method === 'GET') return json(res,200,archives.binding(url.searchParams.get('canvasUrl'),url.searchParams.get('nodeId')));
     if (url.pathname === '/archives/binding' && req.method === 'POST') return json(res,200,await archives.bind(JSON.parse(await readBody(req))));
     if (url.pathname === '/archives/bindings' && req.method === 'POST') return json(res,200,{ok:true,results:await archives.bindMany(JSON.parse(await readBody(req)).bindings)});

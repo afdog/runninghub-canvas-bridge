@@ -17,7 +17,7 @@ test("local HTTP bridge restricts origins, commands, and stale/incorrect client 
   t.after(()=>rm(archiveRoot,{recursive:true,force:true}));
   const child = spawn(process.execPath, ["server/server.mjs"], {
     cwd: new URL("..", import.meta.url),
-    env: { ...process.env, RH_ARCHIVE_DIR:archiveRoot,RH_MEDIA_OPERATIONS_DIR:join(archiveRoot,'media'), RH_BRIDGE_PORT: String(port), RH_BRIDGE_ALLOW_WRITES: "0", RH_BRIDGE_ALLOW_GENERATION: "0", RH_BRIDGE_ACCESS_FILE: "" },
+    env: { ...process.env, RH_ARCHIVE_DIR:archiveRoot,RH_HISTORY_SYNC_DIR:join(archiveRoot,'history'),RH_MEDIA_OPERATIONS_DIR:join(archiveRoot,'media'), RH_BRIDGE_PORT: String(port), RH_BRIDGE_ALLOW_WRITES: "0", RH_BRIDGE_ALLOW_GENERATION: "0", RH_BRIDGE_ACCESS_FILE: "" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(async () => { if (child.exitCode === null) { child.kill(); await once(child, "exit"); } });
@@ -54,6 +54,16 @@ test("local HTTP bridge restricts origins, commands, and stale/incorrect client 
   assert.equal((await (await browserWaiting).json()).state,'complete');
   const rejected=await post('/browser/result',{id:accountJob.id,lease:'foreign',result:{canvases:[]}});assert.equal(rejected.status,409);const retired=await rejected.json();assert.equal(retired.id,accountJob.id);assert.equal(retired.receiptDisposition,'retired');
   assert.equal((await (await fetch(base+'/browser/result?id='+accountJob.id)).json()).state,'complete');
+  const opening={action:'openCanvas',canvasUrl:origin+'/project/canvas/opening',requestId:'open-first-alias'};
+  const openJob=await (await post('/browser/jobs',opening)).json();
+  const openShared=await (await post('/browser/jobs',{...opening,requestId:'open-second-alias'})).json();assert.equal(openShared.id,openJob.id);
+  const {browserRequestId}=await import('../server/request-identity.mjs');
+  const alias=browserRequestId({...opening,requestId:'open-second-alias'});
+  const openLease=await (await fetch(base+'/browser/poll?waitMs=0')).json();
+  const started=Date.now(),aliasWait=fetch(base+'/browser/result?id='+alias+'&waitMs=8000');
+  await new Promise(r=>setTimeout(r,30));
+  await post('/browser/result',{id:openJob.id,lease:openLease.lease,result:{ok:true,reused:false}});
+  assert.equal((await (await aliasWait).json()).state,'complete');assert.ok(Date.now()-started<4000,'shared receipt wakes without waiting for the timeout');
   const runtime = await (await fetch(base + "/runtime-version")).json();
   const href = origin + "/project/canvas/fixture";
   assert.equal((await post("/events", { kind: "bridge.installed", clientId: "fixture-client", href, runtimeVersion: runtime.version }, { Origin: origin })).status, 200);
@@ -151,7 +161,7 @@ test('HTTP command receipts and duplicate IDs survive service restart without re
   const root=await mkdtemp(join(tmpdir(),'rh-restart-'));let child;
   const stop=async()=>{if(child && child.exitCode===null){const exit=once(child,'exit');child.kill();await exit;}};
   t.after(async()=>{await stop();await rm(root,{recursive:true,force:true});});
-  const start=async()=>{child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,RH_ARCHIVE_DIR:root,RH_MEDIA_OPERATIONS_DIR:join(root,'media'),RH_BRIDGE_PORT:String(port),RH_BRIDGE_ALLOW_WRITES:'0',RH_BRIDGE_ALLOW_GENERATION:'0',RH_BRIDGE_ACCESS_FILE:''},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Bridge failed to start');})]);};
+  const start=async()=>{child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,RH_ARCHIVE_DIR:root,RH_HISTORY_SYNC_DIR:join(root,'history'),RH_MEDIA_OPERATIONS_DIR:join(root,'media'),RH_BRIDGE_PORT:String(port),RH_BRIDGE_ALLOW_WRITES:'0',RH_BRIDGE_ALLOW_GENERATION:'0',RH_BRIDGE_ACCESS_FILE:''},stdio:['ignore','pipe','pipe']});await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Bridge failed to start');})]);};
   await start();const base=`http://127.0.0.1:${port}`,href='https://www.runninghub.ai/project/canvas/restart';
   const post=async(path,value)=>(await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)})).json();
   const get=async path=>(await fetch(base+path)).json();

@@ -35,7 +35,8 @@ export class BridgeClient {
         if (ready(value)) return value;
         failures = 0;
         if(Date.now()-started>=1000)continue;
-      } catch {
+      } catch (error) {
+        if(error.status>=400 && error.status<500 && ![408,429].includes(error.status))throw error;
         // Retry only the receipt read. Never replay the submitted operation.
         if (++failures >= 3) return null;
       }
@@ -54,7 +55,7 @@ export class BridgeClient {
       if(error.status>=400 && error.status<500)throw error;
       if(!health.recovery?.stableBrowserIds && args.action!=='manageCanvas')return {ok:false,state:'unknown',submissionState:'unknown',clientRequestId:args.requestId,browserRequestId:null,errorCode:'LEGACY_BROWSER_RECEIPT_UNKNOWN',nextAction:'The older bridge did not acknowledge a job ID. Inspect the browser/account state before retrying; update the bridge for stable browser receipts.'};
     }
-    const job=await this.waitReceipt('/browser/result?id='+encodeURIComponent(id),value=>value?.result,timeoutMs);
+    let job;try{job=await this.waitReceipt('/browser/result?id='+encodeURIComponent(id),value=>value?.result,timeoutMs);}catch(error){return {ok:false,state:'unknown',submissionState:'unknown',browserRequestId:id,errorCode:'BROWSER_RECEIPT_UNAVAILABLE',recoveryErrorCode:error.message,retryable:false,nextAction:'Restore receipt access, then query rh_browser_result with this ID.'};}
     if(job?.result)return {...job.result,...(job.state==='unknown'?{submissionState:'unknown'}:{}),browserRequestId:id,browserSource:args.browserSource};
     return {ok:false,state:'unknown',submissionState:'unknown',browserRequestId:id,errorCode:'BROWSER_OUTCOME_UNKNOWN',nextAction:'Use rh_browser_result with this ID before opening or submitting again.'};
   }
@@ -63,24 +64,28 @@ export class BridgeClient {
     if(!['connect','show'].includes(intent))throw new Error('INVALID_PRESENTATION_INTENT');
     const [clients,health]=await Promise.all([this.request('/clients'),this.request('/browser/status')]);
     const matches=clients.filter(c=>policy.parseCanvas(c.href)?.key===site.key && c.runtimeFreshness==='fresh');
-    const source=browserSource || (health.providers?.includes('codex-browser') || matches.some(c=>c.browserSource==='codex-browser')?'codex-browser':'browser-extension');
+    const source=browserSource || matches.find(c=>c.clientId===this.pinnedClientId)?.browserSource || matches[0]?.browserSource || (health.providers?.includes('codex-browser')?'codex-browser':'browser-extension');
     const connected=matches.find(c=>c.browserSource===source && c.clientId===this.pinnedClientId) || matches.find(c=>c.browserSource===source);
     // Connecting a task is not a request to display its page. Legacy focus=true
     // is deliberately ignored; only the explicit show intent may activate a tab.
     if(connected && intent==='connect')return {ok:true,reused:true,browserSource:source,...await this.select(canvasUrl,allowWrites,connected.clientId),presentation:{intent,activation:'unchanged',connection:'existing',legacyFocusIgnored:focus===true}};
-    const opened=await this.browserJob({action:'openCanvas',canvasUrl,intent,browserSource:source});if(opened.ok===false)return opened;
-    for(let i=0;i<60;i++){
-      const clients=await this.request('/clients');
-      const match=clients.find(c=>policy.parseCanvas(c.href)?.key===policy.parseCanvas(canvasUrl)?.key && c.runtimeFreshness==='fresh' && (!opened.browserSource || c.browserSource===opened.browserSource));
-      if(match)return {...opened,...await this.select(canvasUrl,allowWrites,match.clientId)};
-      await pause(500);
+    const opened=await this.browserJob({action:'openCanvas',canvasUrl,intent,browserSource:source},{timeoutMs:15000});if(opened.ok===false)return opened;
+    const deadline=Date.now()+30000;let connectionError;
+    while(Date.now()<deadline){
+      try{
+        const clients=await this.request('/clients',undefined,Math.min(8000,Math.max(1,deadline-Date.now())));
+        const match=clients.find(c=>policy.parseCanvas(c.href)?.key===site.key && c.runtimeFreshness==='fresh' && (!opened.browserSource || c.browserSource===opened.browserSource));
+        if(match)return {...opened,...await this.select(canvasUrl,allowWrites,match.clientId)};
+      }catch(error){connectionError=error.message;break;}
+      await pause(Math.min(500,Math.max(0,deadline-Date.now())));
     }
-    return {ok:false,canvasUrl,opened:true,error:'CANVAS_CONNECTION_PENDING: page opened; check rh_status before retrying'};
+    return {ok:false,canvasUrl,opened:true,browserRequestId:opened.browserRequestId,browserSource:source,errorCode:'CANVAS_CONNECTION_PENDING',retryable:false,...(connectionError?{connectionError}:{}),nextAction:'The page exists. Check rh_status for its connection; do not create another page.'};
   }
+
   async status() {
-    const [health, clients, browsers, deployment] = await Promise.all([this.request("/health"), this.request("/clients"), this.request("/browser/status"),this.request("/build-info").catch(()=>({available:false}))]);
+    const [health, clients, browsers, deployment, history] = await Promise.all([this.request("/health"), this.request("/clients"), this.request("/browser/status"),this.request("/build-info").catch(()=>({available:false})),this.request("/history-sync").catch(()=>({jobs:[]}))]);
     const session = this.sessionId ? await this.request('/sessions?id='+encodeURIComponent(this.sessionId)) : null;
-    return { ...health, browsers, deployment, legacyAccess:health.access, access:session?.access || null, sessionId:this.sessionId, sessionState:!this.sessionId?'unselected':session?.access?'selected':'expired', selectedCanvas: this.canvasUrl, clients: clients.map(c => ({ clientId: c.clientId, canvasUrl: c.href, title: c.title, runtimeFreshness: c.runtimeFreshness, browserSource:c.browserSource || "unknown", browserInstanceId:c.browserInstanceId || null })) };
+    return { ...health, browsers, deployment, historySync:{waiting:(history.jobs||[]).filter(j=>j.state==='waiting').length,blocked:(history.jobs||[]).filter(j=>j.state==='blocked').map(({id,nodeId,taskId,blockedReason,nextAction})=>({id,nodeId,taskId,blockedReason,nextAction}))}, legacyAccess:health.access, access:session?.access || null, sessionId:this.sessionId, sessionState:!this.sessionId?'unselected':session?.access?'selected':'expired', selectedCanvas: this.canvasUrl, clients: clients.map(c => ({ clientId: c.clientId, canvasUrl: c.href, title: c.title, runtimeFreshness: c.runtimeFreshness, browserSource:c.browserSource || "unknown", browserInstanceId:c.browserInstanceId || null })) };
   }
   async select(canvasUrl, allowWrites, clientId) {
     this.pinnedClientId = clientId || null;
@@ -128,7 +133,7 @@ export class BridgeClient {
     let acceptedId = command.id;
     try { acceptedId = (await this.request("/command", command)).id; }
     catch(error) { if(error.status>=400 && error.status<500)throw error; }
-    const event = await this.waitReceipt(`/result?id=${encodeURIComponent(acceptedId)}`,Boolean,timeoutMs);
+    let event;try{event=await this.waitReceipt(`/result?id=${encodeURIComponent(acceptedId)}`,Boolean,timeoutMs);}catch(error){return {ok:false,submissionState:'unknown',requestId:acceptedId,canvasUrl:this.canvasUrl,errorCode:'COMMAND_OUTCOME_UNKNOWN',recoveryErrorCode:error.message,retryable:false,nextAction:'Restore receipt access, then query rh_command_result with this ID.'};}
     if (event && event.submissionState !== "unknown" && !["CANVAS_WRITE_OUTCOME_UNKNOWN", "COMMAND_OUTCOME_UNKNOWN"].includes(event.errorCode)) {
       if(event.ok===false)return {ok:false,requestId:acceptedId,canvasUrl:this.canvasUrl,errorCode:event.errorCode || 'COMMAND_FAILED',error:event.error,...errorDetails(event)};
       return { ...(event.result?.ok === false ? { ok: false } : {}), requestId: acceptedId, canvasUrl: this.canvasUrl, result: event.result };

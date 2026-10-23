@@ -59,7 +59,7 @@
   return {node,used:[...new Set(used)],errors,warnings};
  }
  async function appPreflight(snapshot,nodeId){
-  const resolved=resolvedApp(snapshot,nodeId);const pinned=resolved.used.map(id=>F.nodeState(snapshot,id));
+  const resolved=resolvedApp(snapshot,nodeId);const pinned=F.executionState(snapshot,nodeId);
   const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(F.canonical(pinned)));
   return {ok:resolved.errors.length===0,nodeId,appId:resolved.node.data.aiApp.id,errors:resolved.errors,warnings:resolved.warnings,digest:Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join(''),resolvedNode:resolved.node};
  }
@@ -152,11 +152,11 @@
  };
  globalThis.RHProductionFeatures={validateValue,resolvedApp,appPreflight,cloneGraph,historyPatch,
  create({api,withMutation,readSnapshot,toYValue,models,uploadImage,isCurrent=()=>true}){
-  const patch=async(command,fn)=>withMutation(command,ctx=>{const before={nodes:ctx.nodes.toJSON(),edges:ctx.edges.toJSON()},after=fn(clone(before));ctx.doc.transact(()=>{
+  const patch=async(command,fn)=>withMutation(command,async ctx=>{const before={nodes:ctx.nodes.toJSON(),edges:ctx.edges.toJSON()},after=fn(clone(before));ctx.doc.transact(()=>{
    const changed=new Map(after.nodes.map(n=>[n.id,n]));for(let i=0;i<ctx.nodes.length;i++){const old=ctx.nodes.get(i).toJSON?.()||ctx.nodes.get(i),next=changed.get(old.id);if(!next){ctx.nodes.delete(i--,1);continue;}if(F.canonical(old)!==F.canonical(next)){ctx.nodes.delete(i,1);ctx.nodes.insert(i,[toYValue(ctx.Y,next)]);}changed.delete(old.id);}for(const n of changed.values())ctx.nodes.push([toYValue(ctx.Y,n)]);
    if(F.canonical(before.edges)!==F.canonical(after.edges)){ctx.edges.delete(0,ctx.edges.length);ctx.edges.push(after.edges.map(e=>toYValue(ctx.Y,e)));}
-  });return {nodeIds:after.changed || [],generationTriggered:false,...(after.appIdentity||{}),...(after.cleanup?{cleanup:after.cleanup}:{})};});
-  const appSchema=async({appId,nodeId})=>{if(!appId){const s=await readSnapshot();appId=s.nodes.find(n=>n.id===nodeId)?.data?.aiApp?.id;}if(!appId)throw new Error('AI_APP_ID_REQUIRED');return {appId,detail:await api('/api/webapp/detail',{webappId:appId})};};
+  });const revisions=Object.fromEntries(await Promise.all((after.changed||[]).filter(id=>after.nodes.some(n=>n.id===id)).map(async id=>[id,await F.revision(after,id)])));return {nodeIds:after.changed || [],revisions,generationTriggered:false,...(after.appIdentity||{}),...(after.cleanup?{cleanup:after.cleanup}:{})};});
+  const appSchema=async({appId,nodeId,refresh=false})=>{if(!appId){const s=await readSnapshot();appId=s.nodes.find(n=>n.id===nodeId)?.data?.aiApp?.id;}if(!appId)throw new Error('AI_APP_ID_REQUIRED');const metadata=models?.readMetadata?await models.readMetadata('/api/webapp/detail',{webappId:appId},{refresh}):{data:await api('/api/webapp/detail',{webappId:appId})};return {appId,detail:metadata.data,...(metadata.fetchedAt?{fetchedAt:new Date(metadata.fetchedAt).toISOString(),cached:metadata.cached}:{})};};
   const createApp=async c=>{
    const before=appTarget(await readSnapshot(),c),detail=before.node?null:(await appSchema(c)).detail;
    if(detail&&!Array.isArray(detail.inputNodes))throw new Error('AI_APP_SCHEMA_UNSUPPORTED');

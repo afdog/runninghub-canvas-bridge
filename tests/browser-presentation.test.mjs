@@ -79,3 +79,32 @@ test('new embedded pages disclose the required foreground creation instead of cl
   assert.equal(broker.result(id).result.presentation.activation,provider==='codex-browser'?'required-for-new-tab':'unchanged');
  }
 });
+
+test('unspecified provider reuses the exact connected canvas before opening in another browser',async()=>{
+ const f=fixture([page('123','browser-extension')]);await f.client.open(url('123'));
+ assert.equal(f.jobs.length,0);assert.equal(f.sessions[0].clientId,'browser-extension-123');
+});
+test('in-flight canvas opens share a job while both original request IDs remain recoverable',async()=>{
+ const broker=new BrowserBroker(),args={action:'openCanvas',canvasUrl:url('123'),browserSource:'browser-extension'};
+ const first=broker.enqueue({...args,requestId:'first-request'}),second=broker.enqueue({...args,requestId:'second-request'});
+ assert.equal(first.id,second.id);assert.equal(broker.jobs.size,1);
+ const {browserRequestId}=await import('../server/request-identity.mjs');
+ const alias=browserRequestId({...args,requestId:'second-request'}),job=broker.poll();broker.complete({id:job.id,lease:job.lease,result:{ok:true,reused:false}});
+ assert.equal(broker.result(alias).result.canvasUrl,url('123'));
+ const other=broker.enqueue({...args,browserSource:'codex-browser',requestId:'different-browser'});assert.notEqual(other.id,first.id);
+});
+test('pending navigation, delayed tab registration and concurrent directory requests reuse one page',async()=>{
+ const source=await readFile(new URL('../extension/background.js',import.meta.url),'utf8'),code=source.slice(0,source.indexOf('\nconst transport='));
+ for(const scenario of ['pending','delayed','directory']){
+  const tabs=[],created=[];
+  const context={crypto:{randomUUID:()=>"fixture"},RHCanvasSitePolicy:globalThis.RHCanvasSitePolicy,importScripts(){},setTimeout,URL,chrome:{
+   tabs:{query:async()=>scenario==='delayed'?[]:tabs.map(t=>({...t})),create:async options=>{created.push(options);const tab={id:created.length,pendingUrl:options.url,status:'loading'};tabs.push(tab);return tab;},get:async id=>({id,status:'complete',url:tabs.find(t=>t.id===id).pendingUrl})},
+   scripting:{executeScript:async()=>[{result:{ok:true,complete:true,canvases:[]}}]}
+  }};
+  runInNewContext(code+'\nglobalThis.handleTest=handle;',context);
+  const job=scenario==='directory'?{action:'listCanvases',origin,scope:'personal'}:{action:'openCanvas',canvasUrl:url('123')};
+  if(scenario==='directory')await Promise.all([context.handleTest(job),context.handleTest(job)]);
+  else{await context.handleTest(job);await context.handleTest(job);}
+  assert.equal(created.length,1,scenario);
+ }
+});
