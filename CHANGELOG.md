@@ -9,6 +9,8 @@
 - Return structured error recovery guidance, consolidate preferred tool descriptions, and keep all 83 tools available.
 - Cache model/app metadata for 30 seconds per page/account/team, coalesce identical requests, and support `refresh`. Add node `view` projections without truncating prompts; app edits return fresh revisions. Build diagnostics reuse hashes when file identities/timestamps remain unchanged.
 
+- Verification: macOS 212 pass / 2 Windows-only skips; Windows 214 pass. Both installations and the ChatGPT runtime are updated with configuration and OAuth retained. Public OAuth/refresh, 83-tool discovery, canvas reads, concurrent page reuse and scope-free receipt recovery passed.
+
 ## 0.10.7 — 2026-10-22 — preserving native history
 
 This stable release includes the previously unpublished 0.10.4–0.10.6 changes below. See the [release summary and upgrade guide](docs/releases/0.10.7.md).
