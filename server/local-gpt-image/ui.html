@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="gpt-image-token" content="__TOKEN__">
+  <title>GPT 原生生图 · RunningHub</title>
+  <link rel="stylesheet" href="/gpt-image/ui.css"><script src="/gpt-image/ui.js" defer></script>
+</head>
+<body>
+  <header><div class="brand"><img src="/gpt-image/icon.svg" alt=""><div><h1>GPT 原生生图</h1><p>生成、参考图编辑，然后放回当前画布</p></div></div><button id="close" class="icon-button" aria-label="关闭生图面板">×</button></header>
+  <main>
+    <div id="connection" role="status" class="connection">正在检查账户…</div>
+    <form id="form">
+      <label for="prompt">画面描述</label>
+      <textarea id="prompt" maxlength="16000" rows="6" placeholder="描述主体、场景、风格，以及需要保留或修改的细节…" required></textarea>
+      <div class="fields"><div><label for="ratio">画面比例</label><select id="ratio"><option value="auto">自动</option><option value="1:1">1:1 · 方形</option><option value="16:9">16:9 · 横屏</option><option value="9:16">9:16 · 竖屏</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div><label class="toggle"><input id="transparent" type="checkbox"><span>透明背景</span></label></div>
+      <div class="reference-head"><label for="references">参考图 <span>可选，最多 5 张</span></label><button id="clear-references" type="button" class="text-button" hidden>清除</button></div>
+      <input id="references" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+      <div id="reference-previews" class="reference-previews"></div>
+      <p class="usage">使用已登录的 Codex 账户用量，生成结果自动上传至当前 RunningHub 画布。</p>
+      <div id="error" class="error" role="alert" hidden></div>
+      <div class="actions"><button id="generate" type="submit" disabled>生成并放回画布 <span>↗</span></button><button id="stop" type="button" class="secondary" hidden>停止</button></div>
+    </form>
+    <section class="results"><h2>当前画布的生成记录</h2><div id="jobs"><p class="empty">第一张图片，从一个想法开始。</p></div></section>
+  </main>
+</body>
+</html>

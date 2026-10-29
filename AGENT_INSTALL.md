@@ -1,5 +1,7 @@
 # 安装与升级
 
+> afdog Codex 生图定制版：优先阅读 [Chrome、MCP 与生图配置](docs/CODEX_IMAGE_SETUP.md)。以下保留上游基础安装与远程接入说明。
+
 适用于 0.8.2。返回 [首页](README.md) · [Agent 使用](AGENT_QUICKSTART.md)。
 
 ## 1. 准备本机服务
@@ -7,7 +9,7 @@
 需要 Node.js 22+、ffmpeg/ffprobe，以及已登录 RunningHub 的浏览器。桥接、MCP 与浏览器应运行在同一台电脑。默认本机地址为 `http://127.0.0.1:18765`。
 
 ```sh
-git clone https://github.com/limyum-creator/runninghub-canvas-bridge.git
+git clone https://github.com/afdog/runninghub-canvas-bridge.git
 cd runninghub-canvas-bridge
 npm ci
 npm run build

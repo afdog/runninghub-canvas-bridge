@@ -36,8 +36,8 @@ test('modern stdio discovery and overlapping calls work without initialize; inva
  const malformed=await request('tools/call',{name:'rh_status',arguments:{}},{...meta,'io.modelcontextprotocol/clientCapabilities':null});assert.equal(malformed.error?.code,-32602);
  const discover=await request('server/discover');assert.equal(discover.result.resultType,'complete');assert.ok(discover.result.supportedVersions.includes('2026-07-28'));
  const responses=await Promise.all([request('tools/list'),...Array.from({length:4},()=>request('tools/call',{name:'rh_status',arguments:{}}))]);
- assert.equal(responses[0].result.tools.length,83);
- for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');assert.equal(response.result.structuredContent.deployment.mcp.tools.count,83);assert.match(response.result.structuredContent.deployment.mcp.tools.fingerprint,/^[a-f0-9]{64}$/);assert.equal(response.result.structuredContent.deployment.mcp.needsRestart,false);}
+ assert.equal(responses[0].result.tools.length,87);
+ for(const response of responses.slice(1)){assert.equal(response.result.resultType,'complete');assert.equal(response.result.structuredContent.ok,true);assert.equal(response.result.structuredContent.source,'fixture');assert.equal(response.result.structuredContent.deployment.mcp.tools.count,87);assert.match(response.result.structuredContent.deployment.mcp.tools.fingerprint,/^[a-f0-9]{64}$/);assert.equal(response.result.structuredContent.deployment.mcp.needsRestart,false);}
  const invalid=await request('tools/call',{name:'rh_move_nodes',arguments:{positions:[{nodeId:'A',x:'bad',y:0}]}});assert.equal(invalid.result.isError,true);
 });
 
@@ -53,7 +53,8 @@ test('MCP handshake, typed tools, prompts and request IDs survive transport', as
   assert.match(client.getInstructions(),/Route by intent/);
   assert.doesNotMatch(client.getInstructions(),/Always read rh_get_layout_template/);
   const {tools}=await client.listTools();
-  assert.equal(tools.length,83);
+  assert.equal(tools.length,87);
+  for(const name of ['rh_gpt_image_create_node','rh_gpt_image_generate','rh_gpt_image_status','rh_gpt_image_commit_output'])assert.ok(tools.some(tool=>tool.name===name));
   assert.equal(tools.some(t=>/eval|api_post/.test(t.name)),false);
   assert.equal(tools.find(t=>t.name==='rh_run_node').annotations.readOnlyHint,false);
   assert.match(tools.find(t=>t.name==='rh_get_layout_template').description,/only before adding or arranging/);
@@ -78,7 +79,7 @@ test('real stdio process initializes and lists tools without bridge availability
   const transport=new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('../server/mcp.mjs',import.meta.url))],stderr:'pipe'});
   t.after(()=>client.close());
   await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length,83);
+  assert.equal((await client.listTools()).tools.length,87);
 });
 
 test('MCP requires exact canvas selection and loopback bridge',async()=>{
@@ -149,7 +150,7 @@ test('MCP transports stable P identity and group-row options without creating an
  const args={appId:'app',nodeId:'existing-P',productionKey:'EP01/P001',x:0,y:0,dryRun:true};const created=await client.callTool({name:'rh_create_app',arguments:args});assert.equal(created.isError,undefined);assert.equal(calls[0].args.productionKey,args.productionKey);
  await client.callTool({name:'rh_configure_app',arguments:{nodeId:'existing-P',productionKey:'EP01/P001',inputs:[{nodeId:'1',fieldName:'prompt',value:'revised'}],dryRun:true}});assert.equal(calls[1].args.nodeId,'existing-P');
  await client.callTool({name:'rh_set_layout_template',arguments:{options:{groupColumns:3,maxColumns:4}}});assert.equal(calls[2].body.options.groupColumns,3);
- const bad=await client.callTool({name:'rh_set_layout_template',arguments:{options:{groupColumns:0}}});assert.equal(bad.isError,true);assert.equal(calls.length,3);assert.equal((await client.listTools()).tools.length,83);
+ const bad=await client.callTool({name:'rh_set_layout_template',arguments:{options:{groupColumns:0}}});assert.equal(bad.isError,true);assert.equal(calls.length,3);assert.equal((await client.listTools()).tools.length,87);
 });
 
 

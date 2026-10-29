@@ -8,16 +8,26 @@
 
 发现画布 · 配置应用 · 绑定素材 · 提交生成 · 下载结果
 
-[![Version](https://img.shields.io/badge/version-0.10.9-8b5cf6?style=flat-square)](https://github.com/limyum-creator/runninghub-canvas-bridge/releases)
-[![MCP](https://img.shields.io/badge/MCP-83_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
-[![CI](https://github.com/limyum-creator/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/limyum-creator/runninghub-canvas-bridge/actions)
+[![Version](https://img.shields.io/badge/version-0.10.9-8b5cf6?style=flat-square)](docs/CODEX_IMAGE_SETUP.md)
+[![MCP](https://img.shields.io/badge/MCP-87_tools-14b8a6?style=flat-square)](docs/TOOLS.md)
+[![CI](https://github.com/afdog/runninghub-canvas-bridge/actions/workflows/test.yml/badge.svg)](https://github.com/afdog/runninghub-canvas-bridge/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square)](LICENSE)
 
-[**开始安装**](AGENT_INSTALL.md) · [**Agent 接入**](AGENT_QUICKSTART.md) · [**工具目录**](docs/TOOLS.md) · [**下载发布包**](https://github.com/limyum-creator/runninghub-canvas-bridge/releases/latest)
+[**开始安装**](AGENT_INSTALL.md) · [**Agent 接入**](AGENT_QUICKSTART.md) · [**工具目录**](docs/TOOLS.md) · [**下载定制版源码**](https://github.com/afdog/runninghub-canvas-bridge/archive/refs/heads/main.zip)
 
 </div>
 
 ---
+
+## afdog Codex 生图定制版（2026-10-29）
+
+这个分支增加 Chrome 扩展图标与原生画布 Codex 生图节点：文生图、最多 5 张参考图、每批 1–4 张、可保存的全局 1–4 张并行设置，以及原节点进度和历史。默认 4 张并行，调用本机已登录 Codex 的可用生图能力。
+
+**[Chrome 与 MCP 安装方案](docs/CODEX_IMAGE_SETUP.md)** · [Codex TOML 模板](config/codex-mcp.example.toml) · [通用 JSON 模板](config/mcp.example.json) · [生图源码](server/local-gpt-image) · [扩展源码](extension)
+
+本定制版含 87 个工具；生图通道不锁定具体模型版本、质量或分辨率，实际能力以账户查询为准。2026-10-29 已验证四个原节点的图片全部回填。保留上游 Apache-2.0 许可证与署名，详见 [来源说明](UPSTREAM.md)。公开源码不含登录凭据、私人画布和生成结果。
+
+通过本分支源码安装和构建。下面的 0.10.9 Release、自动更新和既有验证表属于上游版本；上游发布包不含这里的 Codex 生图扩展，不要用它覆盖本分支。
 
 ## 0.10.9 更新亮点
 

@@ -1,0 +1,18 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="gpt-image-token" content="__TOKEN__"><title>Codex 生图节点</title><link rel="stylesheet" href="/gpt-image/node.css"><script defer src="/gpt-image/node.js"></script></head><body>
+<main>
+<header><span class="brand"><img src="/gpt-image/icon.svg" alt="">Codex 生图</span><span class="badge" id="connection">连接中</span></header>
+<form id="form">
+<div class="segmented" role="group" aria-label="生成方式"><button type="button" data-mode="text" aria-pressed="true">文生图</button><button type="button" data-mode="reference" aria-pressed="false">参考生图</button></div>
+<label class="prompt-label" for="prompt">画面描述 <span id="save-state">自动保存</span></label>
+<textarea id="prompt" maxlength="16000" placeholder="描述主体、场景、风格；参考生图时说明保留什么、修改什么。" required></textarea>
+<div class="parameters"><label>目标比例<select id="ratio"><option value="auto">自动</option><option value="1:1">1:1 · 方形</option><option value="16:9">16:9 · 横屏</option><option value="9:16">9:16 · 竖屏</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></label><label>生成数量<select id="count"><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label><label class="check"><input id="transparent" type="checkbox">透明背景</label></div>
+<div class="concurrency-row"><label for="concurrency">并行数量 <span>全局</span><select id="concurrency" aria-describedby="concurrency-help" disabled><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4" selected>4 张</option></select></label><div><p id="concurrency-state" role="status">读取设置…</p><p id="concurrency-help">所有 Codex 节点共用，自动保存。降低数量不会中断正在生成的图片。</p></div></div>
+<div class="automatic">分辨率 / 质量 <span>原生自动</span><button type="button" id="info-toggle" aria-label="参数说明" title="参数说明">ⓘ</button></div>
+<p class="hint" id="parameter-info" hidden>比例作为构图要求传入；实际像素随结果显示。Codex 当前不开放精确分辨率、质量档位或图像模型版本选择。</p>
+<section id="references" hidden><div class="section-title"><span>参考图 <small id="ref-count">0 / 5</small></span><div><button type="button" id="choose">画布图片</button><button type="button" id="upload">上传</button><input id="files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div></div><div id="reference-list"></div><p id="ref-empty" class="hint">连接左侧输入端口，或选择 / 上传参考图。</p><div id="choices" hidden></div></section>
+<div class="actions"><button id="generate" type="submit" disabled>开始生成 <span>↗</span></button><button id="resume" type="button" hidden>继续剩余</button><button id="stop" type="button" hidden>停止</button></div>
+</form>
+<p id="error" role="alert" hidden></p>
+<section id="progress" hidden aria-live="polite"><div><strong id="stage"></strong><span id="elapsed"></span></div><div id="progress-bar" role="progressbar"><i></i></div><p id="completed-count"></p></section>
+<section id="results"><div class="section-title"><span>生成结果 <small id="result-count"></small></span><button type="button" id="history-toggle" hidden>历史记录</button></div><div id="gallery"><div class="empty"><span>✧</span><p>图片会出现在这个节点中</p></div></div><div id="history" hidden></div></section>
+</main></body></html>

@@ -1,6 +1,6 @@
 # MCP 工具目录
 
-当前版本 0.10.9，仍为 **83** 个工具。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
+当前为 afdog 基于 0.10.9 的定制版，共 **87** 个工具（上游 83 个，加上 4 个 Codex 生图工具）。以下按能力整理当前 MCP 工具；准确参数、必填字段和返回结构以客户端发现的 schema 为准。
 
 所有画布工具携带任务自己的 `scopeId`。连接、账号目录和独立下载状态等工具不需要画布 scope。参见 [调用流程](../AGENT_QUICKSTART.md)。
 
@@ -153,3 +153,14 @@ Non-temporary projects use canvas-native applications. One P keeps one node and 
 - Read: `rh_get_node.view` selects full, inputs, outputs or history; prompts remain complete and revisions retain full-node semantics. Model/app schemas support `refresh` and a 30-second account/team-scoped cache.
 - Errors: `recovery` names the next read/connection tool, available arguments, missing inputs and stopping conditions. It never authorizes generation.
 - History: blocked background jobs are visible in `rh_status.historySync`. After an explicit successful repair, `rh_sync_node_history.resumeBlocked` resumes matching jobs without generating.
+
+## afdog Codex 图片扩展（新增 4 项，总计 87 项）
+
+| 工具 | 用途 |
+| --- | --- |
+| `rh_gpt_image_create_node` | 创建可复用的原生 Codex 图片节点 |
+| `rh_gpt_image_generate` | 提交文生图或带本地参考图的任务，绑定原节点 |
+| `rh_gpt_image_status` | 查询账户生图能力、并行状态与原任务 |
+| `rh_gpt_image_commit_output` | 把已验证图片写回原节点并保留历史 |
+
+参数以运行时 schema 为准；节点面板还可读取连入的画布参考图。参见 [配置与使用](CODEX_IMAGE_SETUP.md)。

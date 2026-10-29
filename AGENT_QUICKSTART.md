@@ -192,3 +192,7 @@ For AI application history, restore uses the recorded `nodeInfoList` mapped to t
 `expected.references` 是所有已填媒体输入的完整映射，`parameter` 使用 `内部nodeId:fieldName`；直接填 URL 的未绑定输入使用 `sourceNodeId:null`。只关心部分输入时使用 `appInputs`。普通模型继续使用 `expected.prompt`、`expected.params` 和参数名形式的 references，不接受原生应用专用字段。
 
 `rh_run_node` 使用相同 expected 校验，并在提交前再次核对 digest。预检成功后输入或真实上游依赖发生变化时，需要重新读取并预检；不会自动重发生成。
+
+## afdog Codex 生图扩展（2026-10-29）
+
+本分支另提供 4 个 `rh_gpt_image_*` 工具。已有 Codex 图片节点应复用原 `nodeId` 并传 `targetNodeId`，结果保存到原节点历史。完整说明与配置模板见 [Codex 生图接入](docs/CODEX_IMAGE_SETUP.md)。

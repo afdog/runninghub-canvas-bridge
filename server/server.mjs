@@ -1,3 +1,4 @@
+// Modified 2026-10-29: afdog Codex image-node integration and portable configuration.
 import {failureReceipt} from './command-result.mjs';
 import {ACTIVE_BUILD,inspectBuild,extensionBuild,deploymentActions} from './build-info.mjs';
 import {ResultWaiters} from './result-waiters.mjs';
@@ -19,6 +20,7 @@ import { CommandJournal } from './command-journal.mjs';
 import { homedir } from 'node:os';
 // Modified 2026-09-27: international routing, origin restrictions and canvas-scoped writes.
 import http from "node:http";
+import {GptImageAddon} from "./local-gpt-image/routes.mjs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile, rename, mkdir } from "node:fs/promises";
@@ -34,6 +36,7 @@ import "../extension/site-policy.js";
 const SITE_POLICY = globalThis.RHCanvasSitePolicy;
 const PORT = Number(process.env.RH_BRIDGE_PORT || 18765);
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65535) throw new Error("Invalid local bridge port");
+const gptImageAddon = new GptImageAddon({port:PORT});
 const ACCESS_FILE = process.env.RH_BRIDGE_ACCESS_FILE;
 let ACCESS = {
   allowWrites: process.env.RH_BRIDGE_ALLOW_WRITES === "1",
@@ -102,7 +105,7 @@ const mediaConsent=new MediaConsent({origin:'http://127.0.0.1:'+PORT});
 const updateMaintenance=new UpdateMaintenance({
   busy:()=>({commands:[...commandRecords.values()].filter(r=>['queued','dispatched'].includes(r.state)).length,
     mutations:canvasMutations.size,browserJobs:browserBroker.status().pending,
-    mediaOperations:mediaOperations.active.size,downloads:downloads.active.size,archiveWorker:archives.running?1:0,historyWorker:historySync.running?1:0}),
+    mediaOperations:mediaOperations.active.size,downloads:downloads.active.size,archiveWorker:archives.running?1:0,historyWorker:historySync.running?1:0,gptImageJobs:gptImageAddon.engine.pendingJobCount??(gptImageAddon.engine.active?1:0)}),
   pause:()=>{archives.stop();historySync.stop();},resume:()=>{archives.start();historySync.start();}
 });
 const updateLeaseTimer=setInterval(()=>updateMaintenance.status(),1000);updateLeaseTimer.unref();
@@ -127,7 +130,8 @@ const runtimeInfo = async () => {
     readFile(new URL("./history-media-preview.js", import.meta.url), "utf8"),
     readFile(new URL("./canvas-cleanup.js", import.meta.url), "utf8")
   ]);
-  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${cleanup}\n${productionFeatures}\n${historyMediaPreview}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}`;
+  const gptImageInjection = await readFile(new URL("./local-gpt-image/inject.js", import.meta.url), "utf8");
+  const source = `${sitePolicy}\n${features}\n${layoutTemplate}\n${cleanup}\n${productionFeatures}\n${historyMediaPreview}\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_URL__ = "http://127.0.0.1:${PORT}";\nwindow.__RUNNINGHUB_CANVAS_BRIDGE_ACCESS__ = ${JSON.stringify({ ...ACCESS, allowWrites: false, canvasId: null, origin: null })};\n${runtimeSource}\n${gptImageInjection}`;
   const hash = createHash("sha256").update(source).digest("hex").slice(0, 16);
   return {
     mtimeMs: runtime.mtimeMs,
@@ -221,6 +225,14 @@ const readBody = (req) =>
 const server = http.createServer(async (req, res) => {
   try {
     if (![ `127.0.0.1:${PORT}`, `localhost:${PORT}` ].includes(req.headers.host)) return json(res, 403, { error: "INVALID_HOST" });
+    const gptImageUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    if(gptImageUrl.pathname.startsWith("/gpt-image/")){
+      if(updateMaintenance.status().maintenance)return gptImageAddon.json(res,503,{errorCode:'UPDATE_IN_PROGRESS',error:'本机生图服务正在更新，请稍后继续；当前请求尚未提交。'});
+      updateMaintenance.requests++;let counted=true;
+      const done=()=>{if(counted){counted=false;updateMaintenance.requests--;}};
+      res.once('finish',done);res.once('close',done);
+      await gptImageAddon.handle(req,res,gptImageUrl);return;
+    }
     const origin = req.headers.origin;
     const browserExtension = /^chrome-extension:\/\/[a-p]{32}$/.test(origin || '');
     if (origin && !browserExtension && !SITE_POLICY.origins.includes(origin) && !(origin==='http://127.0.0.1:'+PORT && /^\/media-approval\/[0-9a-f-]{36}$/.test(req.url))) return json(res, 403, { error: "ORIGIN_NOT_ALLOWED" });
@@ -651,3 +663,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`RunningHub bridge server listening on http://127.0.0.1:${PORT}`);
 });
+
+process.once("SIGTERM",()=>{gptImageAddon.close();server.closeAllConnections();server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),500).unref();});

@@ -18,8 +18,12 @@
     {
       "matches": [
         "https://www.runninghub.ai/project/canvas/*",
+        "https://www.runninghub.ai/projects/canvas/*",
         "https://rhtv.runninghub.ai/project/canvas/*",
+        "https://rhtv.runninghub.ai/projects/canvas/*",
         "https://www.runninghub.cn/project/canvas/*",
+        "https://www.runninghub.cn/projects/canvas/*",
+        "https://rhtv.runninghub.cn/project/canvas/*",
         "https://rhtv.runninghub.cn/projects/canvas/*"
       ],
       "js": [
@@ -32,8 +36,12 @@
     {
       "matches": [
         "https://www.runninghub.ai/project/canvas/*",
+        "https://www.runninghub.ai/projects/canvas/*",
         "https://rhtv.runninghub.ai/project/canvas/*",
+        "https://rhtv.runninghub.ai/projects/canvas/*",
         "https://www.runninghub.cn/project/canvas/*",
+        "https://www.runninghub.cn/projects/canvas/*",
+        "https://rhtv.runninghub.cn/project/canvas/*",
         "https://rhtv.runninghub.cn/projects/canvas/*"
       ],
       "js": [
@@ -43,8 +51,23 @@
       "world": "ISOLATED"
     }
   ],
-  "version_name": "0.10.9",
+  "version_name": "0.10.9 · afdog Codex image edition",
   "background": {
     "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "RunningHub Canvas Bridge · Codex",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }

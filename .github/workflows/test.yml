@@ -49,6 +49,8 @@ jobs:
       - name: Regression tests
         run: node --test --test-reporter=spec --test-timeout=60000 tests/*.test.mjs
         timeout-minutes: 3
+      - name: Codex image regression tests (no account required)
+        run: npm run test:gpt-image
       - run: npm run build
       - run: npm run release:package
       - run: npm pack --dry-run

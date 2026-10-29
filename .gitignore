@@ -16,3 +16,12 @@ local-private/
 
 # Release-only dependency lock, generated from package-lock.json by prepack.
 npm-shrinkwrap.json
+
+# Local Codex account state, generated media, receipts, and machine-only tools.
+.codex/
+.runninghub-canvas-bridge/
+local-media-tools/
+server/local-codex/
+auth.json
+*.pem
+*.key

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "runninghub-canvas": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/runninghub-canvas-bridge/server/mcp.mjs"],
+      "env": {"RH_BRIDGE_URL": "http://127.0.0.1:18765"}
+    }
+  }
+}

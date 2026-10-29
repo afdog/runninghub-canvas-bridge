@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Modified 2026-10-29: afdog Codex image-node integration and portable configuration.
 // Modified 2026-09-27: persistent canvas scope and configurable generation access.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -78,7 +79,7 @@ const plist = () => `<?xml version="1.0" encoding="UTF-8"?>
     <string>${xml(accessPath)}</string>
     <key>RH_BRIDGE_ALLOW_GENERATION</key>
     <string>${process.env.RH_BRIDGE_ALLOW_GENERATION === "1" ? "1" : "0"}</string>
-    ${['RH_FFPROBE','RH_LUMEN_MCP_CONFIG','RH_ARCHIVE_DIR','RH_COMMAND_DIR'].filter(key=>process.env[key]).map(key=>`<key>${key}</key><string>${xml(process.env[key])}</string>`).join('\n    ')}
+    ${['RH_CODEX_BIN','CODEX_HOME','RH_GPT_IMAGE_BROWSER_SOURCE','RH_FFPROBE','RH_LUMEN_MCP_CONFIG','RH_ARCHIVE_DIR','RH_COMMAND_DIR'].filter(key=>process.env[key]).map(key=>`<key>${key}</key><string>${xml(process.env[key])}</string>`).join('\n    ')}
   </dict>
 </dict>
 </plist>

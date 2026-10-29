@@ -1,3 +1,4 @@
+// Modified 2026-10-29: afdog Codex image-node integration and portable configuration.
 // Modified 2026-09-27: international routing, guarded editing, current sync protocol.
 (() => {
   const SITE_POLICY = globalThis.RHCanvasSitePolicy;
@@ -2643,6 +2644,27 @@
 
   const uploadLocalReferenceImage = async ({ config = {}, file = {}, connectToNodeId } = {}) => {
     if (connectToNodeId) await getElement({ elementId: connectToNodeId });
+    if (config.codexTargetNodeId) {
+      const check = await getElement({elementId:config.codexTargetNodeId});
+      const original = check.result?.element || check.element;
+      if (original?.data?.codexImage?.version !== 1 || original.data.codexImage.activeJobId !== config.jobId) throw Error('CODEX_IMAGE_JOB_MISMATCH');
+      const uploaded = await uploadCanvasFile(file);
+      const committed = await withCanvasMutation({type:'canvas.updateNode'}, ({Y,doc,nodes}) => {
+        const index = yArrayToJson(nodes).findIndex(n=>n.id===config.codexTargetNodeId);
+        if (index < 0) throw Error('CODEX_IMAGE_NODE_DELETED');
+        const current = nodes.get(index)?.toJSON?.() || nodes.get(index);
+        const meta = current.data?.codexImage;
+        if(meta?.version!==1 || meta.activeJobId!==config.jobId) throw Error('CODEX_IMAGE_JOB_MISMATCH');
+        const history = [...(meta.history || [])];
+        const record = {jobId:config.jobId,index:config.index,url:uploaded.url,sha256:uploaded.file.sha256,...uploaded.dimensions,prompt:String(config.prompt||'').slice(0,16000),createdAt:Date.now()};
+        if(!history.some(h=>h.jobId===record.jobId&&h.index===record.index))history.push(record);
+        const scale=Math.min(320/uploaded.dimensions.width,320/uploaded.dimensions.height),width=Math.round(uploaded.dimensions.width*scale),height=Math.round(uploaded.dimensions.height*scale);
+        const next = {...current,width,height,style:{...current.style,width,height},data:{...current.data,width,height,sourceObjects:[uploaded.url],imageUrl:uploaded.url,imageWidth:uploaded.dimensions.width,imageHeight:uploaded.dimensions.height,codexImage:{...meta,history,selectedOutput:{jobId:config.jobId,index:config.index}}}};
+        doc.transact(()=>{nodes.delete(index,1);nodes.insert(index,[toYValue(Y,next)]);});
+        return {nodeId:current.id,record};
+      });
+      return {ok:true,file:uploaded.file,dimensions:uploaded.dimensions,url:uploaded.url,nodeId:config.codexTargetNodeId,committed,primaryReference:{nodeId:config.codexTargetNodeId,urls:[uploaded.url]},generationTriggered:false};
+    }
     const uploaded = await uploadCanvasFile(file);
     const created = await createNode({ id: config.id, type: "rh-image", x: config.x, y: config.y,
       data: { title: config.title || file.name, label: config.title || file.name, status: "idle",
