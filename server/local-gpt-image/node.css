@@ -2,3 +2,5 @@
 #resume{border:1px solid #789b83;color:#c6e9d4;white-space:nowrap;padding:9px 10px;font-size:12px}header{justify-content:flex-end;margin-bottom:9px}.brand{display:none}.parameters{gap:8px}
 
 .concurrency-row{display:grid;grid-template-columns:102px minmax(0,1fr);gap:12px;align-items:center;margin-top:12px;padding:10px;border:1px solid #304639;border-radius:8px;background:#1b241e}.concurrency-row label{font-size:11px;color:#b5cabb}.concurrency-row label span{font-size:10px;color:#819b8b;margin-left:4px}.concurrency-row p{margin:0;overflow-wrap:anywhere}#concurrency-state{font-size:11px;color:#badbc7;line-height:1.4}#concurrency-help{font-size:10px;color:#8da394;line-height:1.5;margin-top:4px}.concurrency-row select:disabled{cursor:default;opacity:.55}
+
+#concurrency-custom{grid-column:1/-1}#concurrency-custom>div{display:flex;gap:8px;margin-top:5px}#concurrency-input{min-width:0;flex:1;cursor:text;padding:7px 8px;border:1px solid #45604e;border-radius:6px;background:#111a15;color:#e3eee7;outline:none}#concurrency-input:focus{border-color:#b6e1c6}#concurrency-apply{border:1px solid #557b63;background:#2e4938;font-size:12px;padding:6px 12px}

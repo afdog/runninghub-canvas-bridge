@@ -1,9 +1,12 @@
+import {isImageConcurrency,imageConcurrencyLabel,imagePoolFull} from './concurrency.mjs';
+
 const token=document.querySelector('meta[name=gpt-image-token]').content;
 const params=new URL(location.href).searchParams;
 const nodeId=params.get('nodeId'),canvasUrl=params.get('canvasUrl');
 const $=id=>document.getElementById(id),busy=new Set(['queued','running','importing','waiting']);
 let mode='text',initialized=false,dirty=false,saving=false,saveTimer=null,submitting=false,active=null,state=null,connected=false,refreshing=false,selectedJob=null,renderKey='',refKey='',pending=null,pollError=false,panelVisible=true;
-let concurrencySaving=false,concurrencyError='';
+let concurrencySaving=false,concurrencyError='',concurrencyDraft=null,concurrencyEditing=false;
+const concurrencyPresets=new Set([1,2,3,4,8]);
 const pendingKey='rh-codex-node-pending:'+canvasUrl+':'+nodeId;
 try{pending=JSON.parse(localStorage.getItem(pendingKey)||'null');}catch{}
 function error(text){$('error').textContent=text||'';$('error').hidden=!text;}
@@ -22,17 +25,36 @@ async function save(){
   finally{saving=false;if(dirty)saveTimer=setTimeout(save,1500);}
 }
 function changed(){dirty=true;$('save-state').textContent='待保存';clearTimeout(saveTimer);saveTimer=setTimeout(save,650);}
+function customConcurrency(){const value=(concurrencyDraft||'').trim();return /^\d+$/.test(value)?Number(value):NaN;}
+async function saveConcurrency(value){
+  if(concurrencySaving||!connected||!isImageConcurrency(value))return;
+  concurrencySaving=true;concurrencyError='';controls();
+  try{const {concurrency}=await request('settings',{maxConcurrentImages:value});state={...state,concurrency};concurrencyEditing=false;concurrencyDraft=null;}
+  catch(e){concurrencyError=e.message;}
+  finally{concurrencySaving=false;controls();void refresh();}
+}
 function controls(){
   const cooldown=Math.max(0,Math.ceil(((state?.retryNotBefore||0)-Date.now())/1000));
   const locked=submitting||!!active||!!pending;
   for(const id of ['prompt','ratio','count','transparent','choose','upload'])$(id).disabled=locked;
   for(const b of document.querySelectorAll('[data-mode]'))b.disabled=locked;
   const pool=state?.concurrency;
+  if(connected)$('connection').textContent=active?(active.status==='queued'?'已加入队列':'生成中'):!pool?'Codex 已连接':'Codex 已连接 · '+(pool.maxConcurrentImages===null?'并行不限':'最多 '+pool.maxConcurrentImages+' 张并行');
   $('concurrency').disabled=!connected||concurrencySaving||!pool;
-  if(pool&&!concurrencySaving)$('concurrency').value=String(pool.maxConcurrentImages);
-  $('concurrency-state').textContent=concurrencySaving?'保存中…':concurrencyError||pool?.warning||(!pool?'读取设置…':!connected?'连接中断，设置保留':pool.runningImages>pool.maxConcurrentImages?pool.runningImages+' 张正在完成，后续按 '+pool.maxConcurrentImages+' 张并行':pool.runningImages+' 张处理中'+(pool.queuedImages?' · '+pool.queuedImages+' 张排队':'')+' · 已保存');
+  if(!concurrencyEditing&&!concurrencySaving)concurrencyDraft=null;
+  if(pool&&!concurrencySaving)$('concurrency').value=concurrencyDraft!==null?'custom':pool.maxConcurrentImages===null?'unlimited':concurrencyPresets.has(pool.maxConcurrentImages)?String(pool.maxConcurrentImages):'custom';
+  const custom=$('concurrency').value==='custom';
+  if(custom&&concurrencyDraft===null)concurrencyDraft=String(pool?.maxConcurrentImages??4);
+  $('concurrency-custom').hidden=!custom;
+  if(custom&&$('concurrency-input').value!==concurrencyDraft)$('concurrency-input').value=concurrencyDraft;
+  $('concurrency-input').disabled=!custom||!connected||concurrencySaving;
+  const draftValue=customConcurrency(),validDraft=isImageConcurrency(draftValue),draftChanged=custom&&draftValue!==pool?.maxConcurrentImages;
+  $('concurrency-apply').disabled=!custom||!connected||concurrencySaving||!validDraft||!draftChanged;
+  const draftMessage=custom&&!validDraft?'请输入正整数':draftChanged?'自定义数量尚未保存':null;
+  $('concurrency-state').textContent=concurrencySaving?'保存中…':concurrencyError||draftMessage||pool?.warning||(!pool?'读取设置…':!connected?'连接中断，设置保留':pool.maxConcurrentImages!==null&&pool.runningImages>pool.maxConcurrentImages?pool.runningImages+' 张正在完成，后续按 '+pool.maxConcurrentImages+' 张并行':pool.runningImages+' 张处理中'+(pool.queuedImages?' · '+pool.queuedImages+' 张排队':'')+' · '+imageConcurrencyLabel(pool.maxConcurrentImages)+'并行 · 已保存');
+  $('concurrency-help').textContent=pool?.maxConcurrentImages===null?'所有节点共用。不限会启动全部已提交图片；上游限流时仍会等待重试。':'所有 Codex 节点共用，自动保存。降低数量不会中断正在生成的图片。';
   $('generate').disabled=!connected||submitting||!!active;
-  $('generate').firstChild.textContent=submitting?'正在提交…':active?(active.status==='queued'?'已加入队列…':'正在生成…'):pending?'检查并继续原请求':cooldown?'加入队列 · 限流等待 '+cooldown+' 秒':state?.concurrency?.runningImages>=state?.concurrency?.maxConcurrentImages?'加入生成队列 ':'开始生成 ';
+  $('generate').firstChild.textContent=submitting?'正在提交…':active?(active.status==='queued'?'已加入队列…':'正在生成…'):pending?'检查并继续原请求':cooldown?'加入队列 · 限流等待 '+cooldown+' 秒':imagePoolFull(pool)?'加入生成队列 ':'开始生成 ';
   const last=state?.jobs[0],matches=last&&['prompt','ratio','count','transparent','mode'].every(k=>config()[k]===last[k]);
   $('resume').hidden=!!active||!last?.canResume||!matches;$('resume').textContent='继续剩余 '+Math.max(0,(last?.count||1)-(last?.completedCount||0))+' 张';$('resume').disabled=submitting;
   $('stop').hidden=!active;$('stop').disabled=false;
@@ -72,11 +94,11 @@ async function refresh(){
   try{
     const data=await request('node/state');
     // A poll started before a settings save must not restore its older selection.
-    if((state?.concurrency?.updatedAt||0)>(data.concurrency?.updatedAt||0))data.concurrency={...data.concurrency,maxConcurrentImages:state.concurrency.maxConcurrentImages,updatedAt:state.concurrency.updatedAt,warning:state.concurrency.warning};
+    if((state?.concurrency?.updatedAt||0)>(data.concurrency?.updatedAt||0))data.concurrency={...data.concurrency,maxConcurrentImages:state.concurrency.maxConcurrentImages,unlimited:state.concurrency.maxConcurrentImages===null,updatedAt:state.concurrency.updatedAt,warning:state.concurrency.warning};
     state=data;if(pollError){error('');pollError=false;}connected=!!data.status.imageGeneration;active=data.jobs.find(j=>busy.has(j.status))||null;
     if(!initialized){fill(data.node.config);initialized=true;}
     if(pending&&data.jobs.some(j=>j.id===pending.requestId)){pending=null;localStorage.removeItem(pendingKey);}
-    $('connection').textContent=active?(active.status==='queued'?'已加入队列':'生成中'):connected?'Codex 已连接 · 最多 '+(state.concurrency?.maxConcurrentImages||1)+' 张并行':'未连接';
+    if(!connected)$('connection').textContent='未连接';
     renderReferences(data.node.references);renderResults();parent.postMessage({type:'rh.gptNode.state',nodeId,job:data.jobs[0]||null},new URL(canvasUrl).origin);
     const last=data.jobs[0];if(last?.error&&!active)error((last.completedCount?'本批已保存 '+last.completedCount+' / '+last.count+' 张。\n':'')+last.error);
   }catch(e){pollError=true;connected=false;$('connection').textContent='连接中断';error(e.message);if(/生图连接已过期/.test(e.message))location.reload();}
@@ -85,11 +107,13 @@ async function refresh(){
 for(const id of ['prompt','ratio','count','transparent'])$(id).addEventListener(id==='prompt'?'input':'change',changed);
 $('concurrency').onchange=async()=>{
   if(concurrencySaving||!connected)return;
-  const value=Number($('concurrency').value);concurrencySaving=true;concurrencyError='';controls();
-  try{const {concurrency}=await request('settings',{maxConcurrentImages:value});state={...state,concurrency};}
-  catch(e){concurrencyError=e.message;}
-  finally{concurrencySaving=false;controls();void refresh();}
+  const mode=$('concurrency').value;concurrencyError='';
+  if(mode==='custom'){concurrencyDraft=String(state?.concurrency?.maxConcurrentImages??4);concurrencyEditing=true;controls();$('concurrency-input').focus();return;}
+  concurrencyDraft=null;concurrencyEditing=false;await saveConcurrency(mode==='unlimited'?null:Number(mode));
 };
+$('concurrency-input').addEventListener('input',()=>{concurrencyDraft=$('concurrency-input').value;concurrencyEditing=true;concurrencyError='';controls();});
+$('concurrency-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void saveConcurrency(customConcurrency());}});
+$('concurrency-apply').onclick=()=>saveConcurrency(customConcurrency());
 for(const b of document.querySelectorAll('[data-mode]'))b.onclick=()=>{mode=b.dataset.mode;modeView();changed();};
 $('info-toggle').onclick=()=>{$('parameter-info').hidden=!$('parameter-info').hidden;};
 $('history-toggle').onclick=()=>{$('history').hidden=!$('history').hidden;};

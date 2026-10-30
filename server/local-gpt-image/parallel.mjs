@@ -2,6 +2,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,writeFile,readFile,rename,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {GptImageEngine,validateInput} from './engine.mjs';
+import {isImageConcurrency,imageConcurrencyLabel} from './concurrency.mjs';
 
 const BUSY=new Set(['queued','running','importing','waiting']);
 const TERMINAL=new Set(['complete','failed','interrupted']);
@@ -12,7 +13,7 @@ const RESUMABLE=new Set(['IMAGE_RATE_LIMITED','IMAGE_SERVICE_UNAVAILABLE','IMAGE
 export class ParallelGptImageEngine extends GptImageEngine {
   constructor({maxConcurrentImages=4,...options}={}){
     super(options);
-    if(!Number.isInteger(maxConcurrentImages)||maxConcurrentImages<1||maxConcurrentImages>4)throw Error('Invalid image concurrency');
+    if(!isImageConcurrency(maxConcurrentImages))throw Error('Invalid image concurrency');
     this.maxConcurrentImages=maxConcurrentImages;
     this.workers=new Map();this.readyJobs=new Set();this.imports=new Map();
     this.pumpTimer=null;this.pumping=false;this.pumpAgain=false;this.lastServed=null;this.closing=false;
@@ -22,7 +23,7 @@ export class ParallelGptImageEngine extends GptImageEngine {
     if(!this.settingsReady)this.settingsReady=(async()=>{
       try{
         const s=JSON.parse(await readFile(this.settingsPath,'utf8'));
-        if(s.version!==1||!Number.isInteger(s.maxConcurrentImages)||s.maxConcurrentImages<1||s.maxConcurrentImages>4)throw Error('Invalid saved settings');
+        if(s.version!==1||!isImageConcurrency(s.maxConcurrentImages))throw Error('Invalid saved settings');
         this.maxConcurrentImages=s.maxConcurrentImages;this.settingsRevision=Number(s.updatedAt)||0;
       }catch(e){
         // A broken saved preference must never silently raise the user's selected limit.
@@ -32,7 +33,7 @@ export class ParallelGptImageEngine extends GptImageEngine {
     await this.settingsReady;
   }
   async setConcurrency(value){
-    if(!Number.isInteger(value)||value<1||value>4)throw Error('并行数量必须为 1–4 的整数。');
+    if(!isImageConcurrency(value))throw Error('并行数量必须为正整数，或选择不限。');
     await this.loadSettings();
     const change=(this.settingsSaving||Promise.resolve()).catch(()=>{}).then(async()=>{
       const updatedAt=Math.max(Date.now(),this.settingsRevision+1),temp=this.settingsPath+'.'+randomUUID()+'.tmp';
@@ -40,7 +41,7 @@ export class ParallelGptImageEngine extends GptImageEngine {
         await mkdir(this.root,{recursive:true,mode:0o700});
         await writeFile(temp,JSON.stringify({version:1,maxConcurrentImages:value,updatedAt},null,2),{mode:0o600});
         await rename(temp,this.settingsPath);
-      }catch(e){throw Error('并行设置保存失败，仍使用原来的 '+this.maxConcurrentImages+' 张设置。');}
+      }catch(e){throw Error('并行设置保存失败，仍使用原来的 '+imageConcurrencyLabel(this.maxConcurrentImages)+'设置。');}
       finally{await rm(temp,{force:true}).catch(()=>{});}
       this.maxConcurrentImages=value;this.settingsRevision=updatedAt;this.settingsWarning=null;
       // Decreasing the limit drains current work naturally. Increasing it wakes the queue.
@@ -50,7 +51,7 @@ export class ParallelGptImageEngine extends GptImageEngine {
   }
   get pendingJobCount(){return new Set([...this.jobs.values()].filter(j=>BUSY.has(j.status)).map(j=>j.id).concat([...(this.workers?.values()||[])].map(w=>w.job.id))).size;}
   isNodeBusy(canvasUrl,nodeId){return !!nodeId&&[...this.jobs.values()].some(j=>j.canvasUrl===canvasUrl&&j.targetNodeId===nodeId&&BUSY.has(j.status));}
-  schedulerState(){return {maxConcurrentImages:this.maxConcurrentImages,min:1,max:4,updatedAt:this.settingsRevision,warning:this.settingsWarning,runningImages:this.workers.size,queuedImages:[...this.jobs.values()].filter(j=>this.readyJobs.has(j.id)&&!j.paused&&!j.cancelled).reduce((n,j)=>n+(j.items||[]).filter(i=>i.status==='queued').length,0),pendingJobs:this.pendingJobCount};}
+  schedulerState(){return {maxConcurrentImages:this.maxConcurrentImages,min:1,max:null,unlimited:this.maxConcurrentImages===null,updatedAt:this.settingsRevision,warning:this.settingsWarning,runningImages:this.workers.size,queuedImages:[...this.jobs.values()].filter(j=>this.readyJobs.has(j.id)&&!j.paused&&!j.cancelled).reduce((n,j)=>n+(j.items||[]).filter(i=>i.status==='queued').length,0),pendingJobs:this.pendingJobCount};}
   async status(){await this.loadSettings();return {...await super.status(),concurrency:this.schedulerState()};}
   view(job){
     const v=super.view(job);if(!job.items)return v;
@@ -100,9 +101,14 @@ export class ParallelGptImageEngine extends GptImageEngine {
         for(const job of this.jobs.values())if(this.readyJobs.has(job.id)&&!job.paused&&!job.cancelled){this.aggregate(job);await this.save(job);}
         this.pumpTimer=setTimeout(()=>void this.pump(),Math.max(1,this.retryNotBefore-Date.now()));this.pumpTimer.unref();return;
       }
-      while(!this.closing&&this.workers.size<this.maxConcurrentImages){
+      let launched=0;
+      while(!this.closing&&(this.maxConcurrentImages===null||this.workers.size<this.maxConcurrentImages)){
+        // Recheck cooldown after yielding: unlimited scheduling must still obey 429.
+        if(Date.now()<this.retryNotBefore){this.pumpAgain=true;break;}
         const next=this.next();if(!next)break;
         this.launch(next.job,next.item);
+        // Let settings, cancellation and error receipts run during large queues.
+        if(++launched%16===0)await new Promise(resolve=>setImmediate(resolve));
       }
     }finally{this.pumping=false;if(this.pumpAgain){this.pumpAgain=false;queueMicrotask(()=>void this.pump());}}
   }

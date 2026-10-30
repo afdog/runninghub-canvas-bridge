@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {ParallelGptImageEngine} from './parallel.mjs';
 import {GptImageAddon} from './routes.mjs';
+import {isImageConcurrency,imageConcurrencyLabel,imagePoolFull} from './concurrency.mjs';
 
 const canvasUrl='https://rhtv.runninghub.cn/project/canvas/1000000000000000001';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=','base64');
@@ -36,6 +37,56 @@ async function fixture(options={}){
   return {engine,root,calls,imports,patches,turns,send,success,fail,cleanup};
 }
 const node=()=> 'codex-image-'+randomUUID();
+
+test('concurrency accepts custom positive integers and explicit unlimited without null-to-zero queueing',()=>{
+  for(const value of [null,1,6,64,Number.MAX_SAFE_INTEGER])assert.equal(isImageConcurrency(value),true);
+  for(const value of [undefined,0,-1,1.5,'6',NaN,Infinity,Number.MAX_SAFE_INTEGER+1])assert.equal(isImageConcurrency(value),false);
+  assert.equal(imageConcurrencyLabel(null),'不限');assert.equal(imageConcurrencyLabel(12),'12 张');
+  assert.equal(imagePoolFull({maxConcurrentImages:null,runningImages:20}),false);
+  assert.equal(imagePoolFull({maxConcurrentImages:6,runningImages:6}),true);
+  assert.equal(imagePoolFull({maxConcurrentImages:6,runningImages:5}),false);
+});
+test('a custom limit above four starts six independent nodes before any result and queues the seventh',async()=>{
+  const f=await fixture({maxConcurrentImages:6});try{
+    for(let i=0;i<7;i++)await f.engine.create(canvasUrl,{prompt:'custom '+i,targetNodeId:node()});
+    await until(()=>f.turns().length===6);assert.equal(f.engine.workers.size,6);assert.equal(f.imports.length,0);
+    f.success(0);await until(()=>f.turns().length===7);for(let i=1;i<7;i++)f.success(i);
+    await until(()=>f.engine.pendingJobCount===0);assert.equal(f.imports.length,7);
+  }finally{await f.cleanup();}
+});
+test('unlimited starts every submitted image across twelve nodes and can drain back to a finite limit',async()=>{
+  const f=await fixture({maxConcurrentImages:null});try{
+    for(let i=0;i<12;i++)await f.engine.create(canvasUrl,{prompt:'unlimited '+i,targetNodeId:node()});
+    await until(()=>f.turns().length===12);assert.equal(f.engine.workers.size,12);assert.equal(f.imports.length,0);
+    await f.engine.setConcurrency(2);assert.equal(f.engine.workers.size,12);
+    for(let i=0;i<12;i++)f.success(i);
+    await until(()=>f.engine.pendingJobCount===0);assert.equal(f.imports.length,12);
+  }finally{await f.cleanup();}
+});
+test('large unlimited queues yield so a lowered selection takes effect before dispatching everything',async()=>{
+  const f=await fixture({maxConcurrentImages:1});try{
+    for(let i=0;i<40;i++)await f.engine.create(canvasUrl,{prompt:'large '+i,targetNodeId:node()});
+    await until(()=>f.turns().length===1);
+    const launch=f.engine.launch.bind(f.engine);let started=0,lowered=false;
+    f.engine.launch=(...args)=>{launch(...args);if(++started===16)setImmediate(()=>{f.engine.maxConcurrentImages=3;lowered=true;});};
+    await f.engine.setConcurrency(null);await until(()=>lowered&&f.turns().length===17);
+    assert.equal(f.engine.workers.size,17);assert.ok(f.engine.schedulerState().queuedImages>0);
+    await f.engine.setConcurrency(null);await until(()=>f.turns().length===40);
+    for(let i=0;i<40;i++)f.success(i);
+    await until(()=>f.engine.pendingJobCount===0);assert.equal(f.imports.length,40);
+  }finally{await f.cleanup();}
+});
+test('unlimited and custom selections persist through service restarts without submitting images',async()=>{
+  const f=await fixture();try{
+    const results=await Promise.all([f.engine.setConcurrency(8),f.engine.setConcurrency(32),f.engine.setConcurrency(null)]);
+    assert.deepEqual(results.map(s=>s.maxConcurrentImages),[8,32,null]);
+    assert.equal(JSON.parse(await readFile(f.engine.settingsPath)).maxConcurrentImages,null);
+    const restarted=new ParallelGptImageEngine({root:f.root,rpc:{close(){}},canvas:{close(){}}});
+    try{await restarted.loadSettings();assert.equal(restarted.schedulerState().unlimited,true);assert.equal(restarted.maxConcurrentImages,null);}
+    finally{restarted.close();}
+    assert.equal(f.turns().length,0);
+  }finally{await f.cleanup();}
+});
 
 test('four nodes start by default before any output exists and the fifth waits for a free slot',async()=>{
   const f=await fixture({maxConcurrentImages:undefined});try{
@@ -74,7 +125,7 @@ test('settings persist atomically across restarts and simultaneous saves finish 
 test('invalid settings cannot alter the current selection',async()=>{
   const f=await fixture();try{
     await f.engine.setConcurrency(3);
-    for(const v of [0,5,2.5,'4',null,undefined,NaN,Infinity])await assert.rejects(()=>f.engine.setConcurrency(v),/1–4/);
+    for(const v of [0,-1,2.5,'4',undefined,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])await assert.rejects(()=>f.engine.setConcurrency(v),/正整数/);
     assert.equal(f.engine.maxConcurrentImages,3);assert.equal(JSON.parse(await readFile(f.engine.settingsPath)).maxConcurrentImages,3);
   }finally{await f.cleanup();}
 });
@@ -96,7 +147,7 @@ test('raising concurrency does not bypass an actual upstream rate-limit cooldown
   const f=await fixture({maxConcurrentImages:1,autoRetryLimit:1,retryBaseMs:200});try{
     await f.engine.create(canvasUrl,{prompt:'first',targetNodeId:node()});await f.engine.create(canvasUrl,{prompt:'second',targetNodeId:node()});
     await until(()=>f.turns().length===1);f.fail(0);await until(()=>f.engine.retryNotBefore>Date.now());
-    await f.engine.setConcurrency(4);await pause(25);assert.equal(f.turns().length,1);
+    await f.engine.setConcurrency(null);await pause(25);assert.equal(f.turns().length,1);
     await until(()=>f.turns().length===3);f.success(1);f.success(2);await until(()=>f.engine.pendingJobCount===0);assert.equal(f.imports.length,2);
   }finally{await f.cleanup();}
 });
@@ -109,9 +160,13 @@ test('settings HTTP changes require a valid scoped token and exact local Origin'
     const token=html.match(/name="gpt-image-token" content="([a-f0-9]+)"/)[1];
     const post=(t,origin,value=4)=>fetch(addon.base+'/gpt-image/settings',{method:'POST',headers:{'x-gpt-image-token':t,...(origin?{Origin:origin}:{})},body:JSON.stringify({maxConcurrentImages:value})});
     for(const [t,origin] of [['bad',addon.base],[token,undefined],[token,'https://rhtv.runninghub.cn'],[token,'https://evil.test']])assert.ok((await post(t,origin)).status>=400);
-    assert.equal(f.engine.maxConcurrentImages,2);assert.equal((await post(token,addon.base,5)).status,400);
+    assert.equal(f.engine.maxConcurrentImages,2);assert.equal((await post(token,addon.base,0)).status,400);
     const response=await post(token,addon.base,4);assert.equal(response.status,200);assert.equal((await response.json()).concurrency.maxConcurrentImages,4);
     const loaded=await(await fetch(addon.base+'/gpt-image/settings',{headers:{'x-gpt-image-token':token}})).json();assert.equal(loaded.concurrency.maxConcurrentImages,4);
+    assert.equal((await post(token,addon.base,12)).status,200);
+    const unlimited=await post(token,addon.base,null);assert.equal((await unlimited.json()).concurrency.maxConcurrentImages,null);
+    const saved=await(await fetch(addon.base+'/gpt-image/settings',{headers:{'x-gpt-image-token':token}})).json();assert.equal(saved.concurrency.unlimited,true);
+    const module=await fetch(addon.base+'/gpt-image/concurrency.mjs');assert.equal(module.status,200);assert.match(module.headers.get('content-type'),/javascript/);assert.match(await module.text(),/imagePoolFull/);
   }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await f.cleanup();}
 });
 

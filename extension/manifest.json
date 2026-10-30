@@ -17,14 +17,10 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.runninghub.ai/project/canvas/*",
-        "https://www.runninghub.ai/projects/canvas/*",
-        "https://rhtv.runninghub.ai/project/canvas/*",
-        "https://rhtv.runninghub.ai/projects/canvas/*",
-        "https://www.runninghub.cn/project/canvas/*",
-        "https://www.runninghub.cn/projects/canvas/*",
-        "https://rhtv.runninghub.cn/project/canvas/*",
-        "https://rhtv.runninghub.cn/projects/canvas/*"
+        "https://www.runninghub.ai/*",
+        "https://rhtv.runninghub.ai/*",
+        "https://www.runninghub.cn/*",
+        "https://rhtv.runninghub.cn/*"
       ],
       "js": [
         "site-policy.js",
@@ -35,14 +31,10 @@
     },
     {
       "matches": [
-        "https://www.runninghub.ai/project/canvas/*",
-        "https://www.runninghub.ai/projects/canvas/*",
-        "https://rhtv.runninghub.ai/project/canvas/*",
-        "https://rhtv.runninghub.ai/projects/canvas/*",
-        "https://www.runninghub.cn/project/canvas/*",
-        "https://www.runninghub.cn/projects/canvas/*",
-        "https://rhtv.runninghub.cn/project/canvas/*",
-        "https://rhtv.runninghub.cn/projects/canvas/*"
+        "https://www.runninghub.ai/*",
+        "https://rhtv.runninghub.ai/*",
+        "https://www.runninghub.cn/*",
+        "https://rhtv.runninghub.cn/*"
       ],
       "js": [
         "keepalive.js"
@@ -51,7 +43,7 @@
       "world": "ISOLATED"
     }
   ],
-  "version_name": "0.10.9 · afdog Codex image edition",
+  "version_name": "0.10.9 · afdog Codex image edition · SPA fix",
   "background": {
     "service_worker": "background.js"
   },

@@ -3,7 +3,7 @@
   "version": "0.10.9",
   "license": "Apache-2.0",
   "type": "module",
-  "description": "RunningHub canvas bridge with native Codex image nodes, reference images, and adjustable 1-4 image concurrency (afdog custom edition).",
+  "description": "RunningHub canvas bridge with native Codex image nodes, reference images, and custom or unlimited image concurrency (afdog custom edition).",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/afdog/runninghub-canvas-bridge.git"

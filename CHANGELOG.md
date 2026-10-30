@@ -1,5 +1,13 @@
 # Changelog
 
+## afdog custom edition — 2026-10-30 — adjustable concurrency and SPA entry
+
+- Allow any positive safe integer or explicit unlimited (`maxConcurrentImages: null`) for global image concurrency. Keep the default at four and the per-node batch size at one to four. Persist the selection; changing it does not interrupt already dispatched images or bypass upstream cooldowns.
+- Add eight-image, custom and unlimited choices to the node panel. Keep custom edits during polling and update the saved status immediately. Large queues yield to setting changes, cancellation and error receipts.
+- Load the bridge after navigation from a RunningHub home page or project list. Watch routes on the same already-authorized origins, retry temporary local-service failures, and avoid duplicate initialization or attaching a stale response to another canvas.
+- Real macOS account test: eight independent native nodes, one image and one attempt each, eight successful results, no failures or 429s. Native image-tool phase overlap peaked at eight; all results were saved in about 66 seconds. This verifies at least eight under the tested conditions, not an account ceiling. See [test summary and selected UI screenshot](docs/EIGHT_PARALLEL_TEST.md).
+- Keep the upstream 0.10.9 version and release history. This custom source update does not replace or publish upstream release packages.
+
 ## 0.10.9 — 2026-10-23 — native expectations and tunnel recovery
 
 - Validate native app expected prompt, exact internal input values, binding sources, saved settings and complete media reference mappings. Reject ambiguous or unsupported expectations. Preflight and run use the same checks; failed preflights return no usable digest. Dry-runs remain unapplied.

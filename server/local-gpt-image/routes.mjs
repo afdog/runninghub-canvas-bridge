@@ -31,7 +31,7 @@ export class GptImageAddon {
       const port=new URL(this.base).port;
       if(!['127.0.0.1:'+port,'localhost:'+port].includes(req.headers.host))return this.json(res,403,{error:'INVALID_HOST'});
       if(req.headers.origin&&req.headers.origin!==this.base&&!ORIGINS.includes(req.headers.origin))return this.json(res,403,{error:'ORIGIN_NOT_ALLOWED'});
-      const files={'/gpt-image/node.js':['node.js','text/javascript; charset=utf-8'],'/gpt-image/node.css':['node.css','text/css; charset=utf-8'],'/gpt-image/host.js':['host.js','text/javascript; charset=utf-8'],'/gpt-image/ui.js':['ui.js','text/javascript; charset=utf-8'],'/gpt-image/ui.css':['ui.css','text/css; charset=utf-8'],'/gpt-image/icon.svg':['icon.svg','image/svg+xml']};
+      const files={'/gpt-image/concurrency.mjs':['concurrency.mjs','text/javascript; charset=utf-8'],'/gpt-image/node.js':['node.js','text/javascript; charset=utf-8'],'/gpt-image/node.css':['node.css','text/css; charset=utf-8'],'/gpt-image/host.js':['host.js','text/javascript; charset=utf-8'],'/gpt-image/ui.js':['ui.js','text/javascript; charset=utf-8'],'/gpt-image/ui.css':['ui.css','text/css; charset=utf-8'],'/gpt-image/icon.svg':['icon.svg','image/svg+xml']};
       if(req.method==='GET'&&files[url.pathname]){
         const [file,type]=files[url.pathname];res.writeHead(200,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(await readFile(new URL(file,import.meta.url)));return;
       }
